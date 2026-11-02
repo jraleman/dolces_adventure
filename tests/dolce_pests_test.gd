@@ -22,6 +22,7 @@ func _init() -> void:
 func _run() -> void:
 	_test_pigeon_turns_at_edges()
 	_test_pigeon_turns_at_walls()
+	_test_pigeon_turns_at_slopes()
 	_test_pigeon_on_platform()
 	_test_gnome_stands_still()
 	_test_activation_range()
@@ -90,6 +91,30 @@ func _test_pigeon_on_platform() -> void:
 	_step(pests, grid, 8.0, 5.0 * TILE)
 	_expect(pigeon["grounded"] and is_equal_approx(pigeon["position"].y, 2.0 * TILE),
 		"A pigeon on a one-way platform patrols the platform, not the floor below.")
+
+
+func _test_pigeon_turns_at_slopes() -> void:
+	var grid := Grid.new(["", "", "", "", "#".repeat(16), "#".repeat(16)])
+	grid.set_tile(Vector2i(4, 3), Grid.SLOPE_UP)
+	for column in range(5, 8):
+		grid.set_tile(Vector2i(column, 3), Grid.SOLID)
+	grid.set_tile(Vector2i(8, 3), Grid.SLOPE_DOWN)
+	for above: bool in [false, true]:
+		var pests := Pests.new()
+		var feet := Vector2(6.5 * TILE, 3.0 * TILE) if above else Vector2(1.5 * TILE, FLOOR_Y)
+		var pigeon := pests.add(Pests.PIGEON, feet)
+		var stayed_flat := true
+		var half: float = Pests.PROFILES[Pests.PIGEON]["size"].x * 0.5
+		for _tick in 1200:
+			pests.step(grid, feet, STEP)
+			var point: Vector2 = pigeon["position"]
+			stayed_flat = stayed_flat and is_equal_approx(point.y, feet.y)
+			if above:
+				stayed_flat = stayed_flat and point.x - half >= 5 * TILE - 1 \
+					and point.x + half <= 8 * TILE + 1
+			else:
+				stayed_flat = stayed_flat and point.x + half <= 4 * TILE + 1
+		_expect(stayed_flat, "Ground patrols turn before an uphill wall or downhill ramp, staying flat.")
 
 
 func _test_gnome_stands_still() -> void:

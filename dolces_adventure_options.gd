@@ -17,6 +17,9 @@ const TOUCH_HINT_SEEN_KEY := "game/dolces_adventure_auto_run_hint_seen"
 const KIND_PITS_KEY := "game/dolces_adventure_kind_pits"
 const GAME_SPEED_KEY := "game/dolces_adventure_game_speed"
 const DAY_NIGHT_KEY := "game/dolces_adventure_day_night"
+const CAMERA_KEY := "game/dolces_adventure_camera"
+const CAMERA_SIDE := 0
+const CAMERA_CHASE := 1
 
 const LEFT := &"dolces_adventure_left"
 const RIGHT := &"dolces_adventure_right"
@@ -49,6 +52,18 @@ const TUNABLES: Array[Dictionary] = [
 		"step": 0.05, "format": GameManifest.FORMAT_PERCENT,
 		"title": "Game speed", "heading": ASSIST_HEADING,
 		"description": "Slows the whole run for more reaction time. Applies to the next run.",
+	},
+	{
+		"key": CAMERA_KEY, "type": GameManifest.OPTION_CHOICE,
+		"default": CAMERA_SIDE, "title": "Camera", "heading": HEADING,
+		"choices": [
+			{"value": CAMERA_SIDE, "title": "Side"},
+			{"value": CAMERA_CHASE, "title": "Chase"},
+		],
+		"description": (
+			"Side-on or an angled view looking ahead. "
+			+ "Changes the view, never the course or controls."
+		),
 	},
 	{
 		"key": DAY_NIGHT_KEY, "type": GameManifest.OPTION_TOGGLE,
@@ -118,6 +133,7 @@ const START_PIER := "pier"
 const START_MARKET := "market"
 ## The UTC challenge always starts in the Backyard; bests use dated sections.
 const DAILY := "daily"
+const HILLS := "hills"
 ## Fixed stages: their level ids, and their sections in the best-runs file.
 const STAGE_BACKYARD := "stage_backyard"
 const STAGE_PARK := "stage_park"
@@ -166,6 +182,13 @@ const LEVELS: Array[Dictionary] = [
 		"description": (
 			"One endless course per UTC date, from the front door. "
 			+ "Unlimited retries, separate daily bests. Resets at UTC midnight."
+		),
+	},
+	{
+		"id": HILLS, "title": "Endless - Hills", "icon": LEVEL_ART + "hills.png",
+		"description": (
+			"A separate rolling course through all five biomes. "
+			+ "Run up and down real ramps, with its own bests."
 		),
 	},
 	{

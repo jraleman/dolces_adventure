@@ -24,6 +24,12 @@ const STOMP_PITCH_STEP := 0.12
 const STOMP_PITCH_CAP := 1.6
 ## Landings softer than this are part of running and make no sound.
 const QUIET_LANDING := 700.0
+const MUSIC_STEP := 0.3
+const MUSIC_MELODY: Array[int] = [
+	72, 0, 76, 79, 76, 0, 74, 0, 69, 0, 72, 76, 74, 72, 0, 0,
+	65, 0, 69, 72, 74, 0, 72, 69, 67, 0, 71, 74, 76, 74, 71, 0,
+]
+const MUSIC_BASS: Array[int] = [48, 45, 41, 43]
 
 
 static func cues() -> Dictionary[String, AudioStreamWAV]:
@@ -31,6 +37,33 @@ static func cues() -> Dictionary[String, AudioStreamWAV]:
 	for cue in CUES:
 		bank[cue] = cue_stream(cue)
 	return bank
+
+
+## A quiet original four-bar loop; note envelopes reach zero at both loop edges.
+static func music_stream() -> AudioStreamWAV:
+	var step_samples := roundi(MUSIC_STEP * RATE)
+	var count := step_samples * MUSIC_MELODY.size()
+	var samples := PackedFloat32Array()
+	samples.resize(count)
+	for index in count:
+		var step := index / step_samples
+		var local := float(index % step_samples) / RATE
+		var note := MUSIC_MELODY[step]
+		var pluck := 0.0
+		if note > 0:
+			var hz := 440.0 * pow(2.0, (note - 69) / 12.0)
+			var envelope := minf(local / 0.008, 1.0) * pow(1.0 - local / MUSIC_STEP, 2.0)
+			pluck = (sin(TAU * hz * local) + 0.18 * sin(TAU * hz * 2.0 * local)) * envelope
+		var bass_time := float(index % (step_samples * 8)) / RATE
+		var bass_hz := 440.0 * pow(2.0, (MUSIC_BASS[step / 8] - 69) / 12.0)
+		var bass_envelope := minf(bass_time / 0.012, 1.0) \
+			* pow(1.0 - bass_time / (MUSIC_STEP * 8.0), 3.0)
+		samples[index] = pluck * 0.6 + sin(TAU * bass_hz * bass_time) * bass_envelope * 0.4
+	var stream := _wav(samples, 0.12)
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = count
+	return stream
 
 
 ## The sound, pitch and caption for one `run_state.gd` event; an empty `cue`
@@ -196,14 +229,14 @@ static func _envelope(index: int, count: int, decay_power: float) -> float:
 
 
 ## Normalises to `LEVEL` and packs 16-bit mono PCM.
-static func _wav(samples: PackedFloat32Array) -> AudioStreamWAV:
+static func _wav(samples: PackedFloat32Array, level := LEVEL) -> AudioStreamWAV:
 	var peak := 0.0001
 	for sample in samples:
 		peak = maxf(peak, absf(sample))
 	var data := PackedByteArray()
 	data.resize(samples.size() * 2)
 	for index in samples.size():
-		data.encode_s16(index * 2, roundi(samples[index] / peak * LEVEL * 32767.0))
+		data.encode_s16(index * 2, roundi(samples[index] / peak * level * 32767.0))
 	var stream := AudioStreamWAV.new()
 	stream.format = AudioStreamWAV.FORMAT_16_BITS
 	stream.mix_rate = RATE

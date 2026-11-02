@@ -17,6 +17,7 @@ extends Node3D
 const Art = preload("res://games/dolces_adventure/dolce_art.gd")
 const MeshBuilder = preload("res://games/dolces_adventure/world/mesh_builder.gd")
 const State = preload("res://games/dolces_adventure/run_state.gd")
+const Grid = preload("res://games/dolces_adventure/tile_grid.gd")
 const OutfitModels = preload("res://games/dolces_adventure/world/outfit_models.gd")
 const Options = preload("res://games/dolces_adventure/dolces_adventure_options.gd")
 
@@ -313,11 +314,29 @@ func _present_blink(state: State) -> void:
 ## A cute topple, never a death animation. Reduced motion skips the spin and
 ## simply tips her onto her side.
 func _present_tumble(state: State) -> void:
+	_rig.position.y = 0.0
 	if _pose != TUMBLE:
 		_rig.rotation.z = 0.0
+		if state.grounded and state.grid.slope_count > 0:
+			var left := _ground_y(state, state.position.x - State.BODY_SIZE.x * 0.5)
+			var right := _ground_y(state, state.position.x + State.BODY_SIZE.x * 0.5 - 0.001)
+			if is_finite(left) and is_finite(right):
+				_rig.position.y = (state.position.y - (left + right) * 0.5) * Art.WORLD_SCALE
+				_rig.rotation.z = atan2(left - right, State.BODY_SIZE.x) * state.facing
 		return
 	var played := 1.0 - state.tumble_left / State.TUMBLE_SECONDS
 	_rig.rotation.z = PI * 0.5 if reduced_motion else TAU * TUMBLE_TURNS * played
+
+
+## Contact alignment is essential pose, not decorative motion: reduced motion
+## keeps it, and neither the pitch nor the visual offset changes the body.
+static func _ground_y(state: State, x: float) -> float:
+	var column := floori(x / Grid.TILE)
+	for row in range(floori((state.position.y - 0.001) / Grid.TILE), state.grid.bottom_row + 1):
+		var surface := state.grid.surface_y(Vector2i(column, row), x)
+		if is_finite(surface) and surface >= state.position.y - 0.002:
+			return surface
+	return INF
 
 
 # --------------------------------------------------------------------------

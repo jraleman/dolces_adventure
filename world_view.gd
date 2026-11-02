@@ -37,6 +37,7 @@ const LOOK_AHEAD := 0.14
 const GROUND_LINE := 0.72
 ## A slight downward tilt, so the tops of ledges and platforms read.
 const CAMERA_OFFSET := Vector3(0, 5.0, 30.0)
+const CHASE_OFFSET := Vector3(-18.0, 10.0, 24.0)
 const MAX_RENDER_WIDTH := 1920
 const MAX_RENDER_HEIGHT := 1600
 ## Food turns slowly on the spot so it reads as a pickup; reduced motion parks it.
@@ -59,6 +60,7 @@ var state: State
 var reduced_motion := false
 var intense_effects := true
 var day_night_enabled := true
+var chase_camera := false
 ## The camera centre, in simulation units.
 var camera := Vector2.ZERO
 var world_viewport: SubViewport
@@ -88,7 +90,8 @@ var _pests: Dictionary[int, MeshInstance3D] = {}
 var _shadow: MeshInstance3D
 var _image: TextureRect
 var _zoom := 1.0
-## The forward-only left edge of the frame, in simulation units.
+## The canonical Side boundary, identical in both views: an optional camera
+## cannot change the run's physical clamp or its streamed course window.
 var _left := -INF
 var _camera_ready := false
 var _footstep_left := FOOTSTEP_METRES
@@ -312,6 +315,20 @@ static func terrain_mesh(
 			FoodModels.lunchbox(mesh, centre, cell_size * 0.92, kind == Grid.EMPTY_BOX)
 			continue
 		var soil: Color = colours["soil"] if (cell.x + cell.y) % 2 == 0 else colours["soil_dark"]
+		if grid.is_slope(cell):
+			var left := Art.world_point(Vector2(cell.x * Grid.TILE,
+				grid.surface_y(cell, cell.x * Grid.TILE)))
+			var right := Art.world_point(Vector2((cell.x + 1) * Grid.TILE,
+				grid.surface_y(cell, (cell.x + 1) * Grid.TILE)))
+			var bottom := Art.world_point(Vector2(cell) * Grid.TILE + Vector2(0, Grid.TILE)).y
+			var high := right if kind == Grid.SLOPE_UP else left
+			mesh.extrude(PackedVector2Array([
+				Vector2(left.x, bottom), Vector2(right.x, bottom), Vector2(high.x, high.y),
+			]), Art.GROUND_DEPTH, soil)
+			var front := Vector3(0, 0.04, Art.GROUND_DEPTH * 0.5)
+			var back := Vector3(0, 0.04, -Art.GROUND_DEPTH * 0.5)
+			mesh.quad(left + front, right + front, right + back, left + back, colours["top"])
+			continue
 		mesh.box(centre, Vector3(cell_size, cell_size, Art.GROUND_DEPTH), soil)
 		if cell.y == grid.bottom_row:
 			# The ground carries on below the frame, so a pit reads as a hole
@@ -319,7 +336,7 @@ static func terrain_mesh(
 			var bedrock := BEDROCK_TILES * cell_size
 			mesh.box(centre - Vector3(0, (cell_size + bedrock) * 0.5, 0),
 				Vector3(cell_size, bedrock, Art.GROUND_DEPTH), colours["soil_dark"])
-		if not grid.is_solid(cell + Vector2i.UP):
+		if not grid.is_solid(cell + Vector2i.UP) and not grid.is_slope(cell + Vector2i.UP):
 			var cap := centre + Vector3(0, cell_size * 0.5 + 0.04, 0)
 			mesh.box(cap, Vector3(cell_size, 0.12, Art.GROUND_DEPTH + 0.04), colours["top"])
 	return mesh.finish()
@@ -329,6 +346,11 @@ static func terrain_mesh(
 ## Before the first framed picture there is no edge yet.
 func left_edge() -> float:
 	return _left if _camera_ready else -INF
+
+
+func set_chase_camera(value: bool) -> void:
+	chase_camera = value
+	present(0.0)
 
 
 func present(delta: float) -> void:
@@ -537,9 +559,10 @@ func _present_shadow() -> void:
 
 func _surface_below(feet: Vector2) -> float:
 	var column := floori(feet.x / Grid.TILE)
-	for row in range(floori((feet.y - 0.001) / Grid.TILE) + 1, state.grid.bottom_row + 1):
-		if state.grid.tile(Vector2i(column, row)) != Grid.EMPTY:
-			return row * Grid.TILE
+	for row in range(floori((feet.y - 0.001) / Grid.TILE), state.grid.bottom_row + 1):
+		var surface := state.grid.surface_y(Vector2i(column, row), feet.x)
+		if surface >= feet.y - 0.01 and is_finite(surface):
+			return surface
 	return INF
 
 
@@ -577,8 +600,18 @@ func _present_camera(delta: float) -> void:
 	_camera_ready = true
 	var focus := Art.world_point(camera)
 	world_camera.size = view_size.y * Art.WORLD_SCALE
-	world_camera.position = focus + CAMERA_OFFSET
+	var offset := CHASE_OFFSET if chase_camera else CAMERA_OFFSET
+	world_camera.position = focus + offset
 	world_camera.look_at(focus, Vector3.UP)
+	if chase_camera:
+		# Preserve Side's ground anchor at Dolce's x. Otherwise the angled
+		# ground plane would drop her behind touch controls on a wide phone.
+		var up := world_camera.basis.y
+		var ground := Art.world_point(Vector2(state.position.x, seam))
+		var side_up := CAMERA_OFFSET.z / CAMERA_OFFSET.length()
+		focus.y += (up.dot(ground - focus) - (ground.y - focus.y) * side_up) / up.y
+		world_camera.position = focus + offset
+		world_camera.look_at(focus, Vector3.UP)
 
 
 ## Physical pixels per design pixel for whatever viewport `node` is drawn in.

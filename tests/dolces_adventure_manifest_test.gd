@@ -59,13 +59,14 @@ func _test_identity(manifest: GameManifest, constants: Dictionary) -> void:
 		"The stats URL must stay within 42 UTF-8 bytes or the QR stops scanning.")
 
 
-## The run ends by its own rules, and v1 is solo (owner decision, TODO.md).
+## The run ends by its own rules; v2 seats up to three humans one at a time.
 func _test_rules(manifest: GameManifest) -> void:
 	_expect(manifest.control_style == GameManifest.CONTROL_STYLE_CUSTOM_KEYS,
 		"Dolce's Adventure declares its own keys.")
 	_expect(not manifest.uses_shell_round_rules,
 		"A run ends on the last heart, not on the shell's countdown or lives pool.")
-	_expect(not manifest.supports_multiplayer, "Hot seat is a v2 item; v1 is solo.")
+	_expect(manifest.supports_multiplayer and manifest.local_multiplayer_turns
+		and manifest.max_local_players == 3, "Hot seat supports two/three human turns.")
 	_expect(not manifest.supports_cpu_opponent, "There is no CPU opponent.")
 
 
@@ -73,7 +74,9 @@ func _test_options(manifest: GameManifest, constants: Dictionary) -> void:
 	var keys := PackedStringArray()
 	for definition: Dictionary in manifest.tunables:
 		keys.append(str(definition.get("key", "")))
-	for name: String in ["AUTO_RUN_KEY", "KIND_PITS_KEY", "GAME_SPEED_KEY", "DAY_NIGHT_KEY"]:
+	for name: String in [
+		"AUTO_RUN_KEY", "KIND_PITS_KEY", "GAME_SPEED_KEY", "DAY_NIGHT_KEY", "CAMERA_KEY",
+	]:
 		var key := str(constants.get(name, ""))
 		_expect(key.begins_with("game/" + PREFIX), "%s must be a prefixed game key." % name)
 		_expect(key in keys, "The manifest must declare %s." % key)
@@ -90,6 +93,10 @@ func _test_options(manifest: GameManifest, constants: Dictionary) -> void:
 		_expect(definition.get("type", "") == GameManifest.OPTION_TOGGLE
 			and definition.get("default", null) == defaults[name],
 			"%s must be a toggle defaulting to %s." % [name, defaults[name]])
+	var camera := _definition(manifest.tunables, str(constants.get("CAMERA_KEY", "")))
+	_expect(camera.get("type") == GameManifest.OPTION_CHOICE
+		and camera.get("default") == constants.get("CAMERA_SIDE")
+		and camera.get("choices", []).size() == 2, "Side/Chase is saved through the existing choice UI.")
 
 
 func _test_bindings(manifest: GameManifest, constants: Dictionary) -> void:
@@ -122,6 +129,7 @@ func _test_levels(manifest: GameManifest, constants: Dictionary) -> void:
 		["pier", "REACHED_PIER"],
 		["market", "REACHED_MARKET"],
 		["daily", ""],
+		["hills", ""],
 		["stage_backyard", ""],
 		["stage_park", "CLEARED_BACKYARD"],
 		["stage_street", "CLEARED_PARK"],
@@ -129,7 +137,7 @@ func _test_levels(manifest: GameManifest, constants: Dictionary) -> void:
 		["stage_market", "CLEARED_PIER"],
 	]
 	_expect(manifest.levels.size() == expected.size(),
-		"Five endless start points, an always-open Daily UTC run, then five stages.")
+		"Five endless start points, always-open Daily UTC and Hills, then five stages.")
 	for index in mini(manifest.levels.size(), expected.size()):
 		var level: Dictionary = manifest.levels[index]
 		var pair: Array = expected[index]

@@ -18,6 +18,7 @@ func _init() -> void:
 
 func _run() -> void:
 	_test_cues()
+	_test_music()
 	_test_captions()
 	_test_pitch()
 	_test_quiet_events()
@@ -39,6 +40,26 @@ func _test_cues() -> void:
 			peak = maxi(peak, absi(stream.data.decode_s16(index)))
 		_expect(peak > 6000 and peak < 32767, "'%s' is audible and never clips (%d)." % [cue, peak])
 		_expect(DolceAudio.cue_stream(cue).data == stream.data, "'%s' builds the same every time." % cue)
+
+
+func _test_music() -> void:
+	var stream := DolceAudio.music_stream()
+	var count := stream.data.size() / 2
+	_expect(stream.loop_mode == AudioStreamWAV.LOOP_FORWARD and stream.loop_begin == 0
+		and stream.loop_end == count and stream.get_length() > 8.0,
+		"The music loops its complete four-bar PCM phrase.")
+	var peak := 0
+	var energy := 0.0
+	for index in count:
+		var sample := stream.data.decode_s16(index * 2)
+		peak = maxi(peak, absi(sample))
+		energy += float(sample) * sample
+	_expect(peak < 5000 and sqrt(energy / count) > 400.0,
+		"The bed is audible but much quieter than the gameplay cues.")
+	_expect(absi(stream.data.decode_s16(0) - stream.data.decode_s16((count - 1) * 2)) < 32,
+		"The loop boundary cannot make an abrupt PCM click.")
+	_expect(stream.data == DolceAudio.music_stream().data,
+		"The original melody is deterministic, independent of course RNG.")
 
 
 ## DESIGN §9.5's list: hit, heart lost, heart gained, Full gained and lost,

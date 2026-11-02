@@ -21,8 +21,9 @@ static func manifest() -> GameManifest:
 	game.control_style = GameManifest.CONTROL_STYLE_CUSTOM_KEYS
 	# A run ends when Dolce loses her last heart, not on the shell's clock.
 	game.uses_shell_round_rules = false
-	# Solo in v1; hot-seat turns are a v2 item (DESIGN §12).
-	game.supports_multiplayer = false
+	game.supports_multiplayer = true
+	game.max_local_players = 3
+	game.local_multiplayer_turns = true
 	game.supports_cpu_opponent = false
 	game.levels = Options.LEVELS
 	# One character, so the setup screen can stand her on its plinth in her
@@ -51,6 +52,16 @@ static func manifest() -> GameManifest:
 		"single_player_description": (
 			"Run as far as you can. Jump the pits, bonk the pests and eat every burger."
 		),
+		"multiplayer_description": (
+			"Two or three human turns on the same course. Longest distance wins; "
+			+ "on stages, a clear beats a failure and fastest clear wins."
+		),
+		"instructions_multiplayer_summary": (
+			"Pass the controls after each turn. Same course, fresh hearts, one shared Treats payout."
+		),
+		"instructions_player_two_controls": (
+			"Share the keyboard or pass a pad; each seat can also use its assigned pad."
+		),
 		"solo_confirm_title": "Choose a run",
 		"character_label": "Dog",
 		"solo_confirm_description": (
@@ -58,7 +69,9 @@ static func manifest() -> GameManifest:
 			+ "900, 1,500 and 2,200 m to start further along. Stages are the same 300 m "
 			+ "every time, against the clock: clear one to open the next. "
 			+ "Daily UTC repeats one Backyard course all day, with unlimited retries "
-			+ "and separate bests. A new UTC date gets a new course."
+			+ "and separate bests. A new UTC date gets a new course. "
+			+ "Hills is a separate endless run with real up/down ramps. "
+			+ "Settings offers an optional angled Chase view; Side stays default."
 		),
 		"instructions_solo_summary": "Run right, jump the pits, bonk the pests and eat every burger.",
 		"instructions_headline": "SMALL DOG. BIG APPETITE.",
@@ -83,6 +96,11 @@ static func manifest() -> GameManifest:
 			+ "unlimited retries and separate daily bests. It uses your device's UTC "
 			+ "clock; a started run keeps its date through midnight. "
 			+ "Assists and achievements work in every mode."
+			+ "\nHot seat gives two or three humans one turn each on the same course. "
+			+ "Longest distance wins. On stages, a clear beats a failure and fastest clear "
+			+ "wins; equal headline results share first place."
+			+ "\nHills has rolling ramps and separate bests; other courses stay flat. "
+			+ "The Camera option in Settings changes Side to an angled Chase view."
 		) % State.DISTANCE_POINTS,
 		"instructions_demo_prompt": "GO, DOLCE!",
 		"instructions_player_one_controls": (
@@ -170,6 +188,7 @@ static func manifest() -> GameManifest:
 		{"heading": "Art and sound", "lines": [
 			"Original procedural models: Dolce, her pests, her food and every biome.",
 			"Original synthesized yips, boings, munches and fanfares.",
+			"Original four-bar plucked melody and bass loop.",
 			"Shared DeskCanSaw framework, menus and accessibility.",
 		]},
 		{"heading": "Acknowledgements", "lines": [

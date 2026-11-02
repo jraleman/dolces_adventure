@@ -65,6 +65,8 @@ func _run() -> void:
 				break
 	if _fresh_progress(true):
 		await _test_daily_run(session, store)
+		await _test_hills_run(session)
+	await _play(0.1)
 	_restore()
 	_finish()
 
@@ -74,13 +76,41 @@ func _open() -> Node:
 	var game := packed.instantiate()
 	game.set_script(load("res://games/dolces_adventure/tests/playthrough_gameplay.gd"))
 	get_root().add_child(game)
+	game.set_process(false)
 	# The first round starts once the opening transition and countdown allow.
 	for _frame in 240:
 		await process_frame
 		if bool(game.get("_round_active")):
 			break
 	_expect(bool(game.get("_round_active")), "The run starts by itself.")
+	_expect(bool(get_root().get_node("AudioManager").call("is_music_playing")),
+		"Gameplay starts its loop on the shared Music bus.")
 	return game
+
+
+func _test_hills_run(session: Node) -> void:
+	session.call("set_level", Options.HILLS)
+	var records := Records.new()
+	var ordinary := records.best(Options.START_BACKYARD)
+	var stage := records.best(Options.STAGE_BACKYARD)
+	var daily := records.best("daily_2026-11-01")
+	var game := await _open()
+	_expect(game.get("_stream").hills and game.get("_state").grid.slope_count > 0,
+		"The Hills selector starts actual sloped terrain, not an ordinary run with a new label.")
+	var run := await _drive(game, true)
+	var state: State = game.get("_state")
+	_expect(run["reached_market"] and bool(game.get("_ended")),
+		"Normal inputs play Hills through all five biomes and a genuine death.")
+	_expect(records.best(Options.HILLS)["distance"] == floori(state.distance_m())
+		and records.best(Options.START_BACKYARD) == ordinary
+		and records.best(Options.STAGE_BACKYARD) == stage
+		and records.best("daily_2026-11-01") == daily,
+		"Hills results write only their separate record section.")
+	print("Hills seed 42: %.0f m, %d burgers, %d stomps, biomes=%s." % [
+		state.distance_m(), state.burgers, state.stomps, run["biomes"],
+	])
+	game.queue_free()
+	await process_frame
 
 
 func _test_touch_tip() -> void:
@@ -203,6 +233,9 @@ func _fresh_progress(keep_records := false) -> bool:
 	for key: String in [Options.AUTO_RUN_KEY, Options.KIND_PITS_KEY, Options.DAY_NIGHT_KEY]:
 		settings.call("set_value", key, false)
 	settings.call("set_value", Options.GAME_SPEED_KEY, 1.0)
+	var chase := OS.get_cmdline_user_args().has("--dolce-test-chase")
+	settings.call("set_value", Options.CAMERA_KEY,
+		Options.CAMERA_CHASE if chase else Options.CAMERA_SIDE)
 	return true
 
 

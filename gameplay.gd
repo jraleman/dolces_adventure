@@ -14,6 +14,8 @@ const State = preload("res://games/dolces_adventure/run_state.gd")
 const LevelStream = preload("res://games/dolces_adventure/level_stream.gd")
 const Stages = preload("res://games/dolces_adventure/stages.gd")
 const DailyRun = preload("res://games/dolces_adventure/daily_run.gd")
+const Standings = preload("res://games/dolces_adventure/run_standings.gd")
+const Handoff = preload("res://games/dolces_adventure/hotseat_handoff.gd")
 const ChunkLibrary = preload("res://games/dolces_adventure/chunk_library.gd")
 const WorldView = preload("res://games/dolces_adventure/world_view.gd")
 const RunControls = preload("res://games/dolces_adventure/run_controls.gd")
@@ -29,6 +31,12 @@ const HIT_SHAKE := 7.0
 
 var _state: State
 var _stream: LevelStream
+var _runs: Array[State] = []
+var _streams: Array[LevelStream] = []
+var _run_outfits: Array[PackedStringArray] = []
+var _active_player := 0
+var _wait_for_release := false
+var _handoff: Handoff
 var _seed := 0
 var _view: WorldView
 var _controls: RunControls
@@ -49,6 +57,7 @@ var _auto_run := false
 var _kind_pits := false
 var _game_speed := 1.0
 var _day_night_enabled := true
+var _chase_camera := false
 var _jump_pending := false
 var _ended := false
 ## Bottom pixels kept clear for the tutorial recorder's caption card.
@@ -65,9 +74,25 @@ var _normal_card_minimum := Vector2.ZERO
 var _normal_caption_horizontal := Control.SIZE_SHRINK_CENTER
 
 
+func _ready() -> void:
+	music = DolceAudio.music_stream()
+	super()
+
+
+func _exit_tree() -> void:
+	AudioManager.stop_music(0.0)
+
+
 ## GameCatalog discovers the folder; no framework branch knows this id.
 func game_id() -> String:
 	return Options.GAME_ID
+
+
+func _prepare_session() -> void:
+	if GameSession.player_two_is_cpu():
+		push_warning("Dolce's Adventure supports human hot-seat turns, not a CPU opponent.")
+		GameSession.configure_multiplayer(GameSession.PlayerTwoController.HUMAN)
+	super()
 
 
 func _load_round_settings() -> void:
@@ -76,6 +101,7 @@ func _load_round_settings() -> void:
 	_kind_pits = Settings.tunable_bool(Options.KIND_PITS_KEY)
 	_game_speed = Settings.tunable(Options.GAME_SPEED_KEY)
 	_day_night_enabled = Settings.tunable_bool(Options.DAY_NIGHT_KEY)
+	_chase_camera = Settings.tunable_choice(Options.CAMERA_KEY) == Options.CAMERA_CHASE
 	_outfit = _equipped_outfit()
 
 
@@ -87,6 +113,7 @@ func _build_playfield() -> void:
 	_view.name = "RunView"
 	_view.reduced_motion = _reduced_motion_enabled
 	_view.intense_effects = _intense_effects_enabled
+	_view.chase_camera = _chase_camera
 	_playfield.add_child(_view)
 	_view.configure(_state, _live_chunks())
 	var overlay := _hud.get_node("Overlay") as Control
@@ -99,6 +126,10 @@ func _build_playfield() -> void:
 	_controls.auto_run_requested.connect(_enable_auto_run)
 	_controls.layout_changed.connect(_layout_view)
 	_controls.visibility_changed.connect(_layout_view)
+	_handoff = Handoff.new()
+	overlay.add_child(_handoff)
+	_handoff.start_requested.connect(_start_next_turn)
+	AudioManager.attach_ui_sounds(_handoff)
 	_run_hud.resized.connect(_layout_view, CONNECT_DEFERRED)
 	_pause_button.icon = PAUSE_ICON
 	_pause_button.text = ""
@@ -119,8 +150,9 @@ func _build_playfield() -> void:
 
 
 func _reset_round_state() -> void:
-	_jump_pending = false
-	_ended = false
+	_runs.clear()
+	_streams.clear()
+	_run_outfits.clear()
 	_start_id = str(GameSession.selected_level().get("id", Options.START_BACKYARD))
 	_daily = DailyRun.new(_run_unix_time()) if _start_id == Options.DAILY else null
 	_record_id = _daily.record_id if _daily != null else _start_id
@@ -132,17 +164,33 @@ func _reset_round_state() -> void:
 		_start_biome = ChunkLibrary.Biome.BACKYARD
 	else:
 		_start_biome = ChunkLibrary.biome_named(_start_id)
-	_stream = LevelStream.new(_seed, _start_biome, _stage)
-	_state = _stream.start()
-	_state.auto_run = _auto_run
-	_state.kind_pits = _kind_pits
-	# Applied per run, so a jump never changes speed half-way through.
-	_state.time_scale = _game_speed
 	_best = _records.best(_record_id)
+	for player in _active_player_indices():
+		var stream := LevelStream.new(_seed, _start_biome, _stage, _start_id == Options.HILLS)
+		var run := stream.start()
+		run.auto_run = _auto_run
+		run.kind_pits = _kind_pits
+		run.time_scale = _game_speed
+		_streams.append(stream)
+		_runs.append(run)
+		_run_outfits.append(PackedStringArray(_outfit))
+	_handoff.hide()
+	_begin_turn(0)
+
+
+func _begin_turn(player: int) -> void:
+	_active_player = player
+	_outfit = _equipped_outfit()
+	_state = _runs[player]
+	_stream = _streams[player]
+	_jump_pending = false
+	_ended = false
+	_wait_for_release = not GameSession.is_single_player()
 	if _controls != null:
-		_controls.set_enabled(true)
+		_controls.set_enabled(not _wait_for_release)
 	if _view != null:
 		_view.set_day_night_enabled(_day_night_enabled)
+		_view.set_chase_camera(_chase_camera)
 		_view.configure(_state, _live_chunks())
 		_dress()
 	_sync_hud()
@@ -160,6 +208,8 @@ func _equipped_outfit() -> Array[String]:
 func _dress() -> void:
 	if _view != null and _view.dolce != null:
 		_view.dolce.set_outfit(_outfit[0], _outfit[1], _outfit[2])
+		if not _ended and _active_player < _run_outfits.size():
+			_run_outfits[_active_player] = PackedStringArray(_outfit)
 
 
 ## The store can be opened from the pause menu, so a new hat shows at once.
@@ -204,9 +254,21 @@ func _activate_round() -> void:
 	get_viewport().gui_release_focus()
 
 
+func _process(delta: float) -> void:
+	if _handoff != null and _handoff.visible and _handoff.button.disabled and not _inputs_held():
+		_handoff.button.disabled = false
+		_handoff.button.grab_focus()
+	super(delta)
+
+
 func _update_round(delta: float, _time_left: float) -> void:
 	if not _round_active or get_tree().paused or Router.is_transitioning():
 		return
+	if _wait_for_release:
+		if _inputs_held():
+			return
+		_wait_for_release = false
+		_controls.set_enabled(true)
 	var input := _controls.sample(_controller_device())
 	if not is_zero_approx(input["move"]) or input["jump"] or input["run"]:
 		_controls.dismiss_auto_run_hint()
@@ -221,7 +283,28 @@ func _update_round(delta: float, _time_left: float) -> void:
 	_sync_hud()
 	if _state.run_finished() and not _ended:
 		_ended = true
+		_finish_turn()
+
+
+func _finish_turn() -> void:
+	if _active_player == _runs.size() - 1:
 		_end_round()
+		return
+	_round_active = false
+	_finish_round()
+	var next := _active_player + 1
+	_handoff.show_turn(_player_name(next),
+		"%s: %s" % [_player_name(_active_player), _run_description(_state)], _player_color(next))
+	AudioManager.request_caption(_handoff.title.text + ". Pass the controls.")
+
+
+func _start_next_turn() -> void:
+	if not _handoff.visible or _handoff.button.disabled or _round_active:
+		return
+	_handoff.hide()
+	_begin_turn(_active_player + 1)
+	_round_active = true
+	_activate_round()
 
 
 func _on_run_event(event: Dictionary) -> void:
@@ -258,9 +341,18 @@ func _on_run_event(event: Dictionary) -> void:
 func _sync_hud() -> void:
 	if _state == null:
 		return
-	_scores[PLAYER_ONE] = _state.score()
+	_scores[_active_player] = _state.score()
 	_update_scores()
 	_mode_title.text = "DAILY UTC" if _daily != null else _game_title().to_upper()
+	if _start_id == Options.HILLS:
+		_mode_title.text = "DOLCE'S HILLS"
+	if not GameSession.is_single_player():
+		_mode_title.text = "P%d / %s" % [_active_player + 1, _mode_title.text]
+		var caption := _player_one_card.get_node("Layout/Caption") as Label
+		caption.text = _player_name(_active_player).to_upper()
+		caption.add_theme_color_override("font_color", _player_color(_active_player).lightened(0.25))
+		_player_one_score.text = str(_scores[_active_player])
+		_player_one_score.add_theme_color_override("font_color", _player_color(_active_player))
 	# The headline takes the shell's big card: distance on an endless run
 	# (DESIGN §4.5), the clock on a stage (§5.5).
 	if _stage.is_empty():
@@ -276,7 +368,7 @@ func _sync_hud() -> void:
 
 
 func _handle_gameplay_input(event: InputEvent) -> void:
-	if get_tree().paused:
+	if get_tree().paused or _wait_for_release:
 		return
 	if _controls.is_jump_press(event, _controller_device()):
 		_queue_jump()
@@ -285,13 +377,26 @@ func _handle_gameplay_input(event: InputEvent) -> void:
 
 
 func _queue_jump() -> void:
-	if _round_active and not get_tree().paused and not _state.over:
+	if _round_active and not _wait_for_release and not get_tree().paused and not _state.over:
 		_controls.dismiss_auto_run_hint()
 		_jump_pending = true
 
 
 func _controller_device() -> int:
-	return GameSession.controller_device_for_player(PLAYER_ONE)
+	var assigned := GameSession.controller_device_for_player(_active_player)
+	return assigned if assigned >= 0 else GameSession.controller_device_for_player(PLAYER_ONE)
+
+
+func _inputs_held() -> bool:
+	if Input.is_action_pressed("ui_accept"):
+		return true
+	var devices := Input.get_connected_joypads()
+	devices.append(-1)
+	for device in devices:
+		var held := _controls.sample(device)
+		if not is_zero_approx(held["move"]) or held["jump"] or held["run"]:
+			return true
+	return false
 
 
 ## A press caught by the pause menu must not jump once the run resumes.
@@ -309,6 +414,7 @@ func _notification(what: int) -> void:
 
 func _finish_round() -> void:
 	_jump_pending = false
+	_announcement.hide()
 	if _controls != null:
 		_controls.set_enabled(false)
 
@@ -319,6 +425,8 @@ func _finish_round() -> void:
 
 
 func _describe_round_outcome(_one: int, _two: int) -> Dictionary:
+	if _runs.size() > 1:
+		return _describe_match()
 	if not _stage.is_empty():
 		return _describe_stage()
 	var distance := floori(_state.distance_m())
@@ -340,6 +448,39 @@ func _describe_round_outcome(_one: int, _two: int) -> Dictionary:
 		"subtitle": "  ·  ".join(lines),
 		"color": Art.MUSTARD if new_best else Art.CREAM,
 	}
+
+
+func _describe_match() -> Dictionary:
+	var order := Standings.order(_runs, not _stage.is_empty())
+	var best := order[0]
+	var leaders := PackedStringArray()
+	var lines := PackedStringArray([_stage_title()])
+	if _daily != null:
+		lines[0] += " UTC / seed %06d" % _seed
+	elif _stage.is_empty():
+		lines[0] += " / seed %06d" % _seed
+	for player in order:
+		if Standings.same(_runs[player], _runs[best], not _stage.is_empty()):
+			leaders.append(_player_name(player).to_upper())
+		lines.append("%d. %s / %s" % [
+			Standings.place(_runs, player, not _stage.is_empty()),
+			_player_name(player), _run_description(_runs[player]),
+		])
+	return {
+		"result": leaders[0] + " WINS!" if leaders.size() == 1 else "SHARED FIRST PLACE",
+		"subtitle": "\n".join(lines),
+		"color": _player_color(best) if leaders.size() == 1 else Art.CREAM,
+	}
+
+
+func _run_description(run: State) -> String:
+	if not _stage.is_empty() and run.cleared:
+		return "Clear / " + Stages.time_text(run.clear_time)
+	return "%d m%s" % [floori(run.distance_m()), " / Did not finish" if not _stage.is_empty() else ""]
+
+
+func _representative_run() -> State:
+	return _runs[Standings.order(_runs, not _stage.is_empty())[0]]
 
 
 ## A stage's results lead with the clock; an attempt that ran out of hearts
@@ -386,27 +527,33 @@ func _stage_title() -> String:
 
 ## Assists never block achievements (DESIGN §8), so none of them is checked.
 func _award_round_achievements(_one: int, _two: int) -> void:
-	var distance := _state.distance_m()
+	for run in _runs:
+		_award_run(run)
+
+
+func _award_run(run: State) -> void:
+	var distance := run.distance_m()
 	for key: String in Options.REACH_METRES:
 		if distance >= float(Options.REACH_METRES[key]):
 			_unlock_round_achievement(key)
-	if _state.burgers >= Options.HUNDRED_BURGERS:
+	if run.burgers >= Options.HUNDRED_BURGERS:
 		_unlock_round_achievement(Options.HUNDRED)
-	if _state.best_chain >= Options.COMBO_CHAIN:
+	if run.best_chain >= Options.COMBO_CHAIN:
 		_unlock_round_achievement(Options.COMBO)
-	if _state.best_clean_m >= Options.CLEAN_METRES:
+	if run.best_clean_m >= Options.CLEAN_METRES:
 		_unlock_round_achievement(Options.CLEAN)
-	if not _stage.is_empty() and _state.cleared:
+	if not _stage.is_empty() and run.cleared:
 		var opened := not AchievementManager.is_unlocked(str(_stage["clear_achievement"]))
 		_unlock_round_achievement(str(_stage["clear_achievement"]))
 		var next := _next_stage()
 		if opened and not next.is_empty():
 			_round_progression_notes.append("%s is open" % next["title"])
 	var improved := _records.record(_record_id, {
-		"distance": floori(distance), "score": _state.score(), "burgers": _state.burgers,
-		"time_ms": roundi(_state.clear_time * 1000.0) if _state.cleared else 0,
+		"distance": floori(distance), "score": run.score(), "burgers": run.burgers,
+		"time_ms": roundi(run.clear_time * 1000.0) if run.cleared else 0,
 	})
-	if "score" in improved and int(_best.get("score", 0)) > 0:
+	if "score" in improved and int(_best.get("score", 0)) > 0 \
+			and not "New best score" in _round_progression_notes:
 		_round_progression_notes.append("New best score")
 
 
@@ -422,7 +569,7 @@ func _next_stage() -> Dictionary:
 ## for clearing a stage (owner decision).
 func _round_points_earned(player_one_total: int, player_two_total: int) -> int:
 	var earned := super(player_one_total, player_two_total)
-	if not _stage.is_empty() and _state.cleared:
+	if not _stage.is_empty() and _representative_run().cleared:
 		earned += Options.TREATS_PER_CLEAR
 	return earned
 
@@ -430,68 +577,103 @@ func _round_points_earned(player_one_total: int, player_two_total: int) -> int:
 ## The share card shows the dog that just ran, dressed as she ran.
 func _share_payload() -> Dictionary:
 	var data := super()
-	data["outfit"] = _outfit.duplicate()
+	var order := Standings.order(_runs, not _stage.is_empty())
+	var best := order[0]
+	var run := _runs[best]
+	data["outfit"] = Array(_run_outfits[best])
 	data["score_caption"] = "SCORE"
 	data["level_id"] = _start_id
 	data["level_title"] = _stage_title()
-	data["distance_m"] = floori(_state.distance_m())
+	data["distance_m"] = floori(run.distance_m())
+	data["course_seed"] = _seed
 	if _daily != null:
-		data["mode"] = _stage_title()
+		data["mode"] = _stage_title() if GameSession.is_single_player() \
+			else GameSession.mode_title() + " / " + _stage_title()
 		data["daily_date"] = _daily.utc_date
-		data["course_seed"] = _seed
 	if not _stage.is_empty():
-		data["clear_time"] = Stages.time_text(_state.clear_time) if _state.cleared else ""
+		data["clear_time"] = Stages.time_text(run.clear_time) if run.cleared else ""
+	data["players"] = []
+	for player in _runs.size():
+		var participant := _runs[player]
+		data["players"].append({
+			"player_index": player, "name": _player_name(player), "color": _player_color(player),
+			"score": participant.score(), "distance_m": floori(participant.distance_m()),
+			"cleared": participant.cleared,
+			"clear_time": Stages.time_text(participant.clear_time) if participant.cleared else "",
+			"burgers": participant.burgers, "stomps": participant.stomps,
+			"place": Standings.place(_runs, player, not _stage.is_empty()),
+			"outfit": Array(_run_outfits[player]),
+		})
+	data["standings"] = order
 	return data
 
 
 func _best_combo_summary() -> String:
+	var chain := 0
+	var clean := 0.0
+	for run in _runs:
+		chain = maxi(chain, run.best_chain)
+		clean = maxf(clean, run.best_clean_m)
 	return "Longest stomp chain x%d  |  Longest clean stretch %d m" % [
-		_state.best_chain, floori(_state.best_clean_m),
+		chain, floori(clean),
 	]
 
 
 ## Burgers eaten out of burgers passed: an endless run has no total to miss.
 func _round_totals() -> Dictionary:
-	return {"hits": _state.burgers, "attempts": _state.burgers_passed()}
+	var hits := 0
+	var attempts := 0
+	for run in _runs:
+		hits += run.burgers
+		attempts += run.burgers_passed()
+	return {"hits": hits, "attempts": attempts}
 
 
 func _player_stats(player: int) -> Dictionary:
-	if player != PLAYER_ONE:
+	if player >= _runs.size():
 		return super(player)
-	var passed := _state.burgers_passed()
+	var run := _runs[player]
+	var passed := run.burgers_passed()
 	return {
-		"score": _scores[PLAYER_ONE],
-		"hits": _state.burgers,
-		"misses": _state.hits,
-		"accuracy": roundi(100.0 * _state.burgers / passed) if passed > 0 else 0,
-		"streak": _state.best_chain,
+		"score": _scores[player],
+		"hits": run.burgers,
+		"misses": run.hits,
+		"accuracy": roundi(100.0 * run.burgers / passed) if passed > 0 else 0,
+		"streak": run.best_chain,
 		"details": [
-			{"label": "Distance", "value": "%d m from %s" % [floori(_state.distance_m()), _start_title()]}
+			{"label": "Distance", "value": "%d m from %s" % [floori(run.distance_m()), _start_title()]}
 				if _stage.is_empty() else {"label": "Stage", "value": _stage_title()},
-			{"label": "Stomps", "value": str(_state.stomps)},
-			{"label": "Pits", "value": str(_state.pits)},
-			{"label": "Longest clean stretch", "value": "%d m" % floori(_state.best_clean_m)},
-		] + _run_details(),
+			{"label": "Stomps", "value": str(run.stomps)},
+			{"label": "Pits", "value": str(run.pits)},
+			{"label": "Longest clean stretch", "value": "%d m" % floori(run.best_clean_m)},
+		] + _run_details(run),
 	}
 
 
 ## The last stats rows retain a daily run's date even if the clock has moved on.
-func _run_details() -> Array:
+func _run_details(run: State) -> Array:
 	if _stage.is_empty():
+		var distance := int(_best.get("distance", 0))
+		for participant in _runs:
+			distance = maxi(distance, floori(participant.distance_m()))
 		var rows: Array = [
-			{"label": "Daily best" if _daily != null else "Best distance", "value": "%d m" % maxi(
-				int(_best.get("distance", 0)), floori(_state.distance_m()))},
+			{"label": "Daily best" if _daily != null else "Best distance", "value": "%d m" % distance},
 			{"label": "Course seed", "value": str(_seed)},
 		]
 		if _daily != null:
 			rows.push_front({"label": "Daily UTC", "value": _daily.utc_date})
 		return rows
 	var best_ms := int(_best.get("time_ms", 0))
+	for participant in _runs:
+		if participant.cleared:
+			var time_ms := roundi(participant.clear_time * 1000.0)
+			if best_ms <= 0 or time_ms < best_ms:
+				best_ms = time_ms
 	return [
-		{"label": "Time", "value": Stages.time_text(_state.clear_time) if _state.cleared
+		{"label": "Time", "value": Stages.time_text(run.clear_time) if run.cleared
 			else "Did not finish"},
 		{"label": "Best time", "value": Stages.time_text(best_ms / 1000.0) if best_ms > 0 else "-"},
-		{"label": "Burgers", "value": "%d of %d" % [_state.burgers, Stages.food_total(_stage)]},
+		{"label": "Burgers", "value": "%d of %d" % [run.burgers, Stages.food_total(_stage)]},
 	]
 
 
@@ -502,6 +684,8 @@ func _run_details() -> Array:
 
 func _configure_mode_ui() -> void:
 	super()
+	for player in range(1, _player_ui.size()):
+		(_player_ui[player]["card"] as Control).hide()
 	_callout.hide()
 	# The results card's rules line, once a run is over.
 	if _daily != null:
@@ -514,6 +698,12 @@ func _configure_mode_ui() -> void:
 			% State.DISTANCE_POINTS
 	else:
 		_round_instructions.text = "The same course every time. The clock stops at the food truck."
+	if not GameSession.is_single_player():
+		_round_instructions.text = (
+			"Same course, one turn each. Longest distance wins; headline ties share a place."
+			if _stage.is_empty() else
+			"A clear beats a failure. Fastest clear wins; equal tenths share a place."
+		) + " One shared Treats payout. Play Again restarts every turn."
 	_hint.text = "%s / %s move  |  %s jump  |  Hold %s to run  |  Esc pauses" % [
 		Settings.control_key_label(Options.LEFT), Settings.control_key_label(Options.RIGHT),
 		Settings.control_key_label(Options.JUMP), Settings.control_key_label(Options.RUN),
@@ -525,8 +715,8 @@ func _configure_mode_ui() -> void:
 func _on_game_setting_changed(key: String, _value: Variant) -> void:
 	if key == Options.AUTO_RUN_KEY:
 		_auto_run = Settings.tunable_bool(Options.AUTO_RUN_KEY)
-		if _state != null:
-			_state.auto_run = _auto_run
+		for run in _runs:
+			run.auto_run = _auto_run
 		if _controls != null and _auto_run:
 			_controls.dismiss_auto_run_hint()
 		_layout_view()
@@ -534,6 +724,10 @@ func _on_game_setting_changed(key: String, _value: Variant) -> void:
 		_day_night_enabled = Settings.tunable_bool(Options.DAY_NIGHT_KEY)
 		if _view != null:
 			_view.set_day_night_enabled(_day_night_enabled)
+	elif key == Options.CAMERA_KEY:
+		_chase_camera = Settings.tunable_choice(Options.CAMERA_KEY) == Options.CAMERA_CHASE
+		if _view != null:
+			_view.set_chase_camera(_chase_camera)
 	elif key == "ui/scale":
 		_layout_view()
 
@@ -712,6 +906,7 @@ func _layout_view() -> void:
 	var under_caption := _capture_inset - (get_viewport_rect().size.y - bounds.end.y)
 	_view.bottom_inset = maxf(_controls.covered_height(), under_caption)
 	_run_hud.fit(readability)
+	_handoff.fit(get_viewport_rect().size, readability)
 	_run_hud.position = bounds.position + Vector2.ONE * 12.0 * readability
 	_view.top_inset = _run_hud.position.y - bounds.position.y + _run_hud.size.y \
 		+ 16.0 * touch_readability

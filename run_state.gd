@@ -403,6 +403,7 @@ func _jump() -> void:
 
 
 func _move_horizontal() -> void:
+	var previous := position
 	position.x += velocity.x * STEP
 	var half := BODY_SIZE.x * 0.5
 	if position.x - half < left_limit:
@@ -410,23 +411,66 @@ func _move_horizontal() -> void:
 		velocity.x = maxf(velocity.x, 0.0)
 	if is_zero_approx(velocity.x):
 		return
+	if grounded and grid.slope_count > 0:
+		_follow_ground(previous)
 	var rect := body_rect()
 	var top := floori(rect.position.y / Grid.TILE)
 	var bottom := floori((rect.end.y - 0.001) / Grid.TILE)
 	if velocity.x > 0.0:
 		var column := floori((rect.end.x - 0.001) / Grid.TILE)
 		for row in range(top, bottom + 1):
-			if grid.is_solid(Vector2i(column, row)):
-				position.x = column * Grid.TILE - half
+			var edge := _wall_edge(Vector2i(column, row), rect, true)
+			if is_finite(edge):
+				position.x = edge - half
 				velocity.x = 0.0
 				return
 	else:
 		var column := floori(rect.position.x / Grid.TILE)
 		for row in range(top, bottom + 1):
-			if grid.is_solid(Vector2i(column, row)):
-				position.x = (column + 1) * Grid.TILE + half
+			var edge := _wall_edge(Vector2i(column, row), rect, false)
+			if is_finite(edge):
+				position.x = edge + half
 				velocity.x = 0.0
 				return
+
+
+func _wall_edge(cell: Vector2i, rect: Rect2, right: bool) -> float:
+	if grid.is_solid(cell):
+		return (cell.x + int(not right)) * Grid.TILE
+	if not grid.is_slope(cell):
+		return INF
+	var leading := rect.end.x if right else rect.position.x
+	if rect.end.y <= grid.surface_y(cell, leading) + 0.001:
+		return INF
+	var kind := grid.tile(cell)
+	if right and kind == Grid.SLOPE_UP:
+		return cell.x * Grid.TILE + clampf((cell.y + 1) * Grid.TILE - rect.end.y, 0.0, Grid.TILE)
+	if not right and kind == Grid.SLOPE_DOWN:
+		return cell.x * Grid.TILE + clampf(rect.end.y - cell.y * Grid.TILE, 0.0, Grid.TILE)
+	return (cell.x + int(not right)) * Grid.TILE
+
+
+## Follow only a continuous 45-degree surface, never snap across a ledge or
+## spend an airborne jump. The flat-course integration path is unchanged.
+func _follow_ground(previous: Vector2) -> void:
+	var reach := absf(position.x - previous.x) + 0.002
+	var surface := INF
+	var rect := body_rect()
+	for column in range(floori(rect.position.x / Grid.TILE),
+			floori((rect.end.x - 0.001) / Grid.TILE) + 1):
+		for row in range(floori((previous.y - reach) / Grid.TILE),
+				floori((previous.y + reach) / Grid.TILE) + 1):
+			var candidate := _foot_surface(Vector2i(column, row), rect)
+			if absf(candidate - previous.y) <= reach:
+				surface = minf(surface, candidate)
+	if is_finite(surface):
+		position.y = surface
+
+
+func _foot_surface(cell: Vector2i, rect: Rect2) -> float:
+	var left := maxf(rect.position.x, cell.x * Grid.TILE)
+	var right := minf(rect.end.x, (cell.x + 1) * Grid.TILE)
+	return minf(grid.surface_y(cell, left), grid.surface_y(cell, right))
 
 
 func _move_vertical() -> void:
@@ -438,6 +482,9 @@ func _move_vertical() -> void:
 	var right := floori((rect.end.x - 0.001) / Grid.TILE)
 	grounded = false
 	if velocity.y > 0.0:
+		if grid.slope_count > 0:
+			_land_on_surface(previous_feet, was_grounded)
+			return
 		var row := floori((position.y - 0.001) / Grid.TILE)
 		var surface := row * Grid.TILE
 		for column in range(left, right + 1):
@@ -461,7 +508,8 @@ func _move_vertical() -> void:
 				< absf((b + 0.5) * Grid.TILE - position.x))
 		for column: int in columns:
 			var cell := Vector2i(column, row)
-			if grid.is_solid(cell):
+			if grid.is_solid(cell) or (grid.is_slope(cell)
+					and previous_feet - BODY_SIZE.y >= (row + 1) * Grid.TILE - 0.001):
 				position.y = (row + 1) * Grid.TILE + BODY_SIZE.y
 				velocity.y = 0.0
 				_rising_from_jump = false
@@ -471,8 +519,34 @@ func _move_vertical() -> void:
 				return
 
 
+func _land_on_surface(previous_feet: float, was_grounded: bool) -> void:
+	var surface := INF
+	var rect := body_rect()
+	for column in range(floori(rect.position.x / Grid.TILE),
+			floori((rect.end.x - 0.001) / Grid.TILE) + 1):
+		for row in range(floori(previous_feet / Grid.TILE) - 1, floori(position.y / Grid.TILE) + 1):
+			var candidate := _foot_surface(Vector2i(column, row), rect)
+			if previous_feet <= candidate + 0.002 and position.y >= candidate:
+				surface = minf(surface, candidate)
+	if not is_finite(surface):
+		return
+	if not was_grounded:
+		_events.append({"kind": "land", "speed": velocity.y})
+	position.y = surface
+	velocity.y = 0.0
+	grounded = true
+
+
 ## Standing on something: a solid tile or a one-way top just under the paws.
 func _supported() -> bool:
+	if grid.slope_count > 0:
+		var rect := body_rect()
+		for column in range(floori(rect.position.x / Grid.TILE),
+				floori((rect.end.x - 0.001) / Grid.TILE) + 1):
+			for row in range(floori(position.y / Grid.TILE) - 1, floori(position.y / Grid.TILE) + 1):
+				if absf(_foot_surface(Vector2i(column, row), rect) - position.y) < 0.002:
+					return true
+		return false
 	if not is_zero_approx(fposmod(position.y, Grid.TILE)):
 		return false
 	var row := floori(position.y / Grid.TILE)

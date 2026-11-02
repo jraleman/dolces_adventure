@@ -41,6 +41,7 @@ var placed: Array[Dictionary] = []
 var next_column := 0
 ## The fixed stage being played, or empty on an endless run.
 var stage: Dictionary = {}
+var hills := false
 var _stage_queue: Array[String] = []
 var _rng := RandomNumberGenerator.new()
 var _since_breather := 0
@@ -49,7 +50,7 @@ var _last_id := ""
 
 func _init(
 	seed_value := 0, start_biome_value: int = ChunkLibrary.Biome.BACKYARD,
-	stage_value: Dictionary = {}
+	stage_value: Dictionary = {}, hills_value := false
 ) -> void:
 	run_seed = posmod(seed_value, SEED_LIMIT)
 	start_biome = start_biome_value
@@ -57,6 +58,7 @@ func _init(
 	start_metres = float(ChunkLibrary.BIOMES[start_biome_value]["start_m"])
 	_rng.seed = run_seed
 	stage = stage_value
+	hills = hills_value and stage.is_empty()
 	if not stage.is_empty():
 		start_biome = int(stage["biome"])
 		biome = start_biome
@@ -108,7 +110,8 @@ func next_chunk() -> Dictionary:
 	var hardest := 1 + floori(metres / RAMP_METRES)
 	var want_breather := _since_breather >= BREATHER_EVERY - 1
 	var candidates: Array[Dictionary] = []
-	for chunk in ChunkLibrary.pool(biome):
+	var pool := ChunkLibrary.hills_pool(biome) if hills else ChunkLibrary.pool(biome)
+	for chunk in pool:
 		if str(chunk["id"]) == _last_id:
 			continue
 		if bool(chunk.get("breather", false)) != want_breather:
@@ -121,9 +124,9 @@ func next_chunk() -> Dictionary:
 
 ## The chunk ids this seed lays over the first `metres`, without a run on them.
 static func sequence(
-	seed_value: int, metres: float, from_biome: int = ChunkLibrary.Biome.BACKYARD
+	seed_value: int, metres: float, from_biome: int = ChunkLibrary.Biome.BACKYARD, hills_value := false
 ) -> Array[String]:
-	var stream := new(seed_value, from_biome)
+	var stream := new(seed_value, from_biome, {}, hills_value)
 	var opening := ChunkLibrary.gate_of(from_biome)
 	stream._place(opening, false)
 	var ids: Array[String] = [str(opening["id"])]
@@ -137,12 +140,12 @@ static func sequence(
 ## The rows of everything this seed lays over the first `metres`, joined into
 ## one strip, so the validator can walk a whole run end to end.
 static func strip(
-	seed_value: int, metres: float, from_biome: int = ChunkLibrary.Biome.BACKYARD
+	seed_value: int, metres: float, from_biome: int = ChunkLibrary.Biome.BACKYARD, hills_value := false
 ) -> Array[String]:
 	var rows: Array[String] = []
 	rows.resize(ChunkLibrary.ROWS)
 	rows.fill("")
-	var stream := new(seed_value, from_biome)
+	var stream := new(seed_value, from_biome, {}, hills_value)
 	var chunk: Dictionary = ChunkLibrary.gate_of(from_biome)
 	while chunk != null:
 		var chunk_rows := ChunkLibrary.rows_of(chunk)

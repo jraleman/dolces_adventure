@@ -55,6 +55,10 @@ func _run() -> void:
 	if only in ["", "levels"]:
 		for level: Dictionary in Options.LEVELS:
 			await _capture_level(level)
+	if only == "hills":
+		for level: Dictionary in Options.LEVELS:
+			if level["id"] == Options.HILLS:
+				await _capture_level(level)
 	if only in ["", "icon"]:
 		await _capture_icon()
 	quit(1 if _failed else 0)
@@ -113,9 +117,13 @@ func _capture_level(level: Dictionary) -> void:
 	var stage := Stages.find(str(level["id"]))
 	var biome := int(stage["biome"]) if not stage.is_empty() \
 		else ChunkLibrary.biome_named(str(level["id"]))
-	var stream := LevelStream.new(ART_SEED, biome, stage)
+	var hills: bool = level["id"] == Options.HILLS
+	var stream := LevelStream.new(ART_SEED, biome, stage, hills)
 	var state := stream.start()
 	var stand := (STAND_COLUMN + 0.5) * 40.0
+	if hills:
+		stand = (ChunkLibrary.START_COLUMN + 0.5
+			+ ChunkLibrary.rows_of(ChunkLibrary.START)[0].length()) * Grid.TILE
 	if not stage.is_empty():
 		# Walk the stream forward until the goal is laid, keeping every chunk.
 		while not is_finite(state.goal_x):

@@ -40,6 +40,7 @@ func _run() -> void:
 	_test_auto_run()
 	_test_pit()
 	_test_grid()
+	_test_slopes()
 	_finish()
 
 
@@ -101,6 +102,70 @@ func _apex(state: State, tap := false, move := 0.0, run := false) -> float:
 # --------------------------------------------------------------------------
 # Cases
 # --------------------------------------------------------------------------
+
+func _hill() -> Grid:
+	var grid := _floor()
+	grid.set_tile(Vector2i(4, 3), Grid.SLOPE_UP)
+	for column in range(5, 11):
+		grid.set_tile(Vector2i(column, 3), Grid.SOLID)
+	grid.set_tile(Vector2i(11, 3), Grid.SLOPE_DOWN)
+	return grid
+
+
+func _test_slopes() -> void:
+	for direction: float in [1.0, -1.0]:
+		var grid := _hill()
+		var x := 2.5 * TILE if direction > 0 else 16.5 * TILE
+		var state := _body(grid, Vector2(x, FLOOR_Y))
+		state.velocity.x = direction * State.RUN_SPEED
+		var peak := FLOOR_Y
+		var continuous := true
+		for _tick in 192:
+			state.advance(STEP, direction, true, false)
+			peak = minf(peak, state.position.y)
+			continuous = continuous and state.grounded and state.velocity.y == 0.0
+		_expect(continuous and is_equal_approx(peak, FLOOR_Y - TILE)
+			and is_equal_approx(state.position.y, FLOOR_Y)
+			and is_equal_approx(state.velocity.x, direction * State.RUN_SPEED),
+			"Both directions continuously climb, cross and descend a hill at the same run speed.")
+		_expect(_count(state.take_events(), "land") == 0,
+			"Walking ramp joins never produces repeated landing sounds.")
+	var grid := _hill()
+	var x := 4.5 * TILE
+	var top := grid.surface_y(Vector2i(4, 3), x + State.BODY_SIZE.x * 0.5)
+	var resting := _body(grid, Vector2(x, top))
+	_hold(resting, 0.3)
+	_expect(resting.grounded and resting.position == Vector2(x, top),
+		"A body placed on the diagonal stays at rest without sliding or sinking.")
+	resting.advance(STEP, 1.0, true, true, true)
+	_hold(resting, 0.1, 1.0, true, true)
+	_expect(not resting.grounded and resting.position.y < top - TILE
+		and _count(resting.take_events(), "jump") == 1, "Jumping off a ramp spends one normal jump.")
+	var falling := _body(grid, Vector2(x, top - 2.0 * TILE))
+	_hold(falling, 0.6)
+	_expect(falling.grounded and is_equal_approx(falling.position.y, top)
+		and _count(falling.take_events(), "land") == 1, "A fall lands once on the true diagonal.")
+	var edge := _body(grid, Vector2(5.5 * TILE, FLOOR_Y - 4.0))
+	grid.set_tile(Vector2i(5, 3), Grid.EMPTY)
+	edge.velocity.x = -State.RUN_SPEED
+	_hold(edge, 0.1, -1.0, true)
+	_expect(edge.position.x >= 5.0 * TILE + State.BODY_SIZE.x * 0.5,
+		"The filled high edge cannot be entered sideways from below.")
+	var floating := Grid.new()
+	floating.set_tile(Vector2i(4, 3), Grid.SLOPE_UP)
+	var under := _body(floating, Vector2(x, FLOOR_Y + State.BODY_SIZE.y + 8.0))
+	under.velocity.y = -300.0
+	_hold(under, 0.05)
+	_expect(under.position.y >= FLOOR_Y + State.BODY_SIZE.y
+		and _count(under.take_events(), "bump") == 1, "The solid underside blocks a rising head.")
+	var platform_grid := _hill()
+	platform_grid.set_tile(Vector2i(14, 2), Grid.ONE_WAY)
+	var platform := _body(platform_grid, Vector2(14.5 * TILE, FLOOR_Y))
+	_apex(platform)
+	_expect(platform.grounded and is_equal_approx(platform.position.y, 2.0 * TILE),
+		"One-way platforms still permit jumping through and landing in a Hills grid.")
+	grid.clear_before(12)
+	_expect(grid.slope_count == 0, "Streaming away the ramp leaves no stale slope collision mode.")
 
 
 func _test_rest() -> void:

@@ -47,6 +47,8 @@ const LEGEND := {
 	".": "air",
 	"#": "ground",
 	"=": "platform",
+	"/": "slope_up",
+	"\\": "slope_down",
 	"?": "lunchbox",
 	"!": "lunchbox_big_burger",
 	"B": State.BURGER,
@@ -62,8 +64,57 @@ const LEGEND := {
 	"F": "goal",
 }
 ## Glyphs Dolce can stand on, and the ones she cannot pass through.
-const SUPPORTS := ["#", "=", "?", "!"]
-const BLOCKS := ["#", "?", "!"]
+const SUPPORTS := ["#", "=", "?", "!", "/", "\\"]
+const BLOCKS := ["#", "?", "!", "/", "\\"]
+
+## Only the Hills pool uses these profiles; none enters an old seed or stage.
+## P is replaced with the current biome's pest on flat ground.
+const HILLS: Array[Dictionary] = [
+	{
+		"id": "knoll", "difficulty": 1,
+		"rows": [
+			"........................",
+			"........................",
+			".......BBBB.............",
+			".S..P./####\\......S.....",
+			"########################",
+			"########################",
+		],
+	},
+	{
+		"id": "twin_knolls", "difficulty": 1,
+		"rows": [
+			"............................",
+			"............................",
+			".......BB........BB.........",
+			".S..P./##\\....../##\\....S...",
+			"############################",
+			"############################",
+		],
+	},
+	{
+		"id": "table_hill", "difficulty": 2,
+		"rows": [
+			"............................",
+			"........BBBB................",
+			"......./####\\...............",
+			".S..P./######\\...........S..",
+			"############################",
+			"############################",
+		],
+	},
+	{
+		"id": "hill_and_gap", "difficulty": 3,
+		"rows": [
+			"................................",
+			"................................",
+			".......BBBB........BBB..........",
+			".S..P./####\\....S......S........",
+			"###################...##########",
+			"###################...##########",
+		],
+	},
+]
 
 ## `jump_reach()` by rise, so a whole generated run validates in moments.
 static var _reach_by_rise: Dictionary[float, float] = {}
@@ -858,6 +909,11 @@ static func chunk_named(id: String) -> Dictionary:
 		for chunk in chunks_of(biome):
 			if chunk["id"] == id:
 				return chunk
+	if id.begins_with("hills_"):
+		for biome: int in BIOMES:
+			for chunk in hills_pool(biome):
+				if chunk["id"] == id:
+					return chunk
 	return {}
 
 
@@ -867,6 +923,23 @@ static func pool(biome: int) -> Array[Dictionary]:
 	for chunk in chunks_of(biome):
 		if not chunk.get("gate", false):
 			chunks.append(chunk)
+	return chunks
+
+
+static func hills_pool(biome: int) -> Array[Dictionary]:
+	var chunks: Array[Dictionary] = []
+	for chunk in pool(biome):
+		if chunk.get("breather", false):
+			chunks.append(chunk)
+	var pest: String = ["p", "s", "v", "g", "h"][biome]
+	for profile in HILLS:
+		var rows := rows_of(profile)
+		for row in rows.size():
+			rows[row] = rows[row].replace("P", pest)
+		chunks.append({
+			"id": "hills_%s_%s" % [BIOMES[biome]["id"], profile["id"]],
+			"biome": biome, "difficulty": profile["difficulty"], "hills": true, "rows": rows,
+		})
 	return chunks
 
 
@@ -925,6 +998,8 @@ static func build(rows: Array[String], grid: Grid, origin := Vector2i.ZERO) -> D
 					grid.set_tile(cell, Grid.SOLID)
 				"=":
 					grid.set_tile(cell, Grid.ONE_WAY)
+				"/", "\\":
+					grid.set_tile(cell, Grid.GLYPHS[glyph])
 				"?", "!":
 					grid.set_tile(cell, Grid.LUNCHBOX)
 					lunchboxes[cell] = State.BURGER if glyph == "?" else State.BIG_BURGER
@@ -1000,6 +1075,7 @@ static func validate(chunk: Dictionary) -> PackedStringArray:
 					problems.append("%s: a breather has no pests." % id)
 					return problems
 	problems.append_array(_placement_problems(id, rows))
+	problems.append_array(_ramp_problems(chunk, rows))
 	problems.append_array(route_problems(rows, id))
 	return problems
 
@@ -1060,12 +1136,52 @@ static func _placement_problems(id: String, rows: Array[String]) -> PackedString
 				continue
 			if Pests.flies(str(LEGEND[glyph])):
 				continue
-			if not spots.has(Vector2i(column, row + 1)):
+			if row + 1 < ROWS and rows[row + 1][column] in "/\\":
+				problems.append("%s: the pest at (%d, %d) needs flat ground." % [id, column, row])
+			elif not spots.has(Vector2i(column, row + 1)):
 				problems.append("%s: the pest at (%d, %d) has nothing to stand on." % [id, column, row])
 			elif glyph == "n" and not (spots.has(Vector2i(column - 1, row + 1))
 					and spots.has(Vector2i(column + 1, row + 1))):
 				problems.append("%s: the gnome at (%d, %d) needs room to land beside it." % [id, column, row])
 	return problems
+
+
+## A ramp is backed, has open headroom and meets exposed solid ground at both
+## exact endpoints. Jump reach/margins below are deliberately not extended.
+static func _ramp_problems(chunk: Dictionary, rows: Array[String]) -> PackedStringArray:
+	var problems := PackedStringArray()
+	var id := str(chunk.get("id", "?"))
+	var spots := _by_column(_spots(rows))
+	for row in ROWS:
+		for column in rows[0].length():
+			if not rows[row][column] in "/\\":
+				continue
+			if not chunk.get("hills", false):
+				problems.append("%s: ramps belong only to the Hills pool." % id)
+			if row + 1 >= ROWS or rows[row + 1][column] != "#":
+				problems.append("%s: ramp (%d, %d) needs solid backing." % [id, column, row])
+			if _blocked_above(rows, column, row):
+				problems.append("%s: ramp (%d, %d) needs open headroom." % [id, column, row])
+			var here := Vector2i(column, row)
+			for right: bool in [false, true]:
+				var joined := false
+				var neighbour := column + (1 if right else -1)
+				for other: Vector2i in spots.get(neighbour, []):
+					if rows[other.y][other.x] in "#/\\" \
+							and _edge_row(rows, here, right) == _edge_row(rows, other, not right):
+						joined = true
+				if not joined:
+					problems.append("%s: ramp (%d, %d) has an unjoined endpoint." % [id, column, row])
+	return problems
+
+
+static func _edge_row(rows: Array[String], spot: Vector2i, right: bool) -> int:
+	var glyph := rows[spot.y][spot.x]
+	if glyph == "/":
+		return spot.y + int(not right)
+	if glyph == "\\":
+		return spot.y + int(right)
+	return spot.y
 
 
 ## Every place she can stand: `Vector2i(column, row)` of the tile under her.
@@ -1114,6 +1230,9 @@ static func _can_move(rows: Array[String], from: Vector2i, to: Vector2i) -> bool
 	var across := absi(to.x - from.x)
 	if across == 0 or across > MAX_JUMP_COLUMNS:
 		return false
+	if rows[from.y][from.x] in "/\\" or rows[to.y][to.x] in "/\\":
+		var right := to.x > from.x
+		return across == 1 and _edge_row(rows, from, right) == _edge_row(rows, to, not right)
 	if across == 1 and to.y == from.y:
 		return true
 	var rise := (from.y - to.y) * Grid.TILE

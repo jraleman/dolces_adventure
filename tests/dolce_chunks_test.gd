@@ -7,6 +7,7 @@ extends SceneTree
 const ChunkLibrary = preload("res://games/dolces_adventure/chunk_library.gd")
 const State = preload("res://games/dolces_adventure/run_state.gd")
 const Grid = preload("res://games/dolces_adventure/tile_grid.gd")
+const WorldView = preload("res://games/dolces_adventure/world_view.gd")
 
 const OPEN := "................"
 const GROUND := "################"
@@ -25,6 +26,7 @@ func _run() -> void:
 	_test_biomes()
 	_test_validator_matches_the_jump()
 	_test_validator_rejects()
+	_test_hills()
 	_finish()
 
 
@@ -39,6 +41,10 @@ func _test_every_chunk_validates() -> void:
 	for chunk in _every_chunk():
 		for problem in ChunkLibrary.validate(chunk):
 			_failures.append(problem)
+	for biome: int in ChunkLibrary.BIOMES:
+		for chunk in ChunkLibrary.hills_pool(biome):
+			for problem in ChunkLibrary.validate(chunk):
+				_failures.append(problem)
 
 
 func _test_library_shape() -> void:
@@ -182,6 +188,46 @@ func _test_validator_rejects() -> void:
 
 
 # --------------------------------------------------------------------------
+
+func _test_hills() -> void:
+	var hill: Dictionary
+	for chunk in ChunkLibrary.hills_pool(0):
+		if chunk.get("hills", false):
+			hill = chunk
+			break
+	var rows := ChunkLibrary.rows_of(hill)
+	var grid := Grid.new()
+	var course := ChunkLibrary.build(rows, grid)
+	_expect(grid.is_slope(Vector2i(6, 3)) and grid.is_slope(Vector2i(11, 3))
+		and course["safe_points"].size() == 2, "Hills build actual ramps and retain flat safe ground.")
+	var probe := hill.duplicate(true)
+	probe.erase("hills")
+	_expect(_mentions(ChunkLibrary.validate(probe), "only to the Hills"),
+		"Ramps cannot silently be added to an ordinary chunk.")
+	probe = hill.duplicate(true)
+	probe["rows"][4] = "######.#################"
+	_expect(_mentions(ChunkLibrary.validate(probe), "solid backing"),
+		"A hollow/floating ramp is not accepted.")
+	probe = hill.duplicate(true)
+	probe["rows"][3] = ".S..p./.###\\......S....."
+	_expect(_mentions(ChunkLibrary.validate(probe), "unjoined endpoint"),
+		"A ramp may not end at a gap or mismatched surface.")
+	probe = hill.duplicate(true)
+	probe["rows"][1] = "......#................."
+	_expect(_mentions(ChunkLibrary.validate(probe), "open headroom"),
+		"A ceiling over an incline is not accepted.")
+	probe = hill.duplicate(true)
+	probe["rows"][2] = "......pBBBB............."
+	_expect(_mentions(ChunkLibrary.validate(probe), "flat ground"),
+		"Ground pests cannot spawn on diagonals.")
+	var ramp := Grid.new()
+	ramp.set_tile(Vector2i(0, 3), Grid.SLOPE_UP)
+	var mesh := WorldView.terrain_mesh(ramp, 0, 1, 0)
+	var diagonal := false
+	var normals: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_NORMAL]
+	for normal in normals:
+		diagonal = diagonal or (normal.y > 0.6 and absf(normal.x) > 0.6)
+	_expect(diagonal, "The terrain mesh has the same lit diagonal, not an axis-aligned box.")
 
 
 func _flat() -> Array[String]:

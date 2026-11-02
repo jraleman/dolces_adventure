@@ -33,6 +33,7 @@ func _run() -> void:
 	_test_blink_and_tumble()
 	_test_collar()
 	_test_particles()
+	_test_slope_pose()
 	_finish()
 
 
@@ -60,6 +61,24 @@ func _test_parts() -> void:
 	var drawn := model.find_children("*", "MeshInstance3D", true, false).filter(
 		func(node: MeshInstance3D) -> bool: return node.mesh != null)
 	_expect(drawn.size() <= 12, "Dolce draws in a dozen calls or fewer (%d)." % drawn.size())
+	model.free()
+
+
+func _test_slope_pose() -> void:
+	var state := _state()
+	state.grid.set_tile(Vector2i(4, 3), Grid.SLOPE_UP)
+	var x := 4.5 * Grid.TILE
+	state.place(Vector2(x, state.grid.surface_y(Vector2i(4, 3), x + State.BODY_SIZE.x * 0.5)))
+	var model := _model()
+	var before := state.position
+	for facing: int in [1, -1]:
+		state.facing = facing
+		model.present(state, 0.0, true)
+		var rig := model.get_node("Rig") as Node3D
+		_expect(signf(rig.rotation.z) == facing and rig.position.y < 0.0,
+			"Reduced-motion paws align to the diagonal in either facing direction.")
+	_expect(state.position == before and state.elapsed == 0.0,
+		"Visual ramp alignment cannot feed back into the body or clock.")
 	model.free()
 
 

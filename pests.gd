@@ -376,7 +376,7 @@ static func _blocked(grid: Grid, feet: Vector2, size: Vector2) -> bool:
 	var box := Rect2(feet - Vector2(size.x * 0.5, size.y), size)
 	for column in range(floori(box.position.x / Grid.TILE), floori((box.end.x - 0.001) / Grid.TILE) + 1):
 		for row in range(floori(box.position.y / Grid.TILE), floori((box.end.y - 0.001) / Grid.TILE) + 1):
-			if grid.is_solid(Vector2i(column, row)):
+			if grid.is_solid(Vector2i(column, row)) or grid.is_slope(Vector2i(column, row)):
 				return true
 	return false
 
@@ -390,7 +390,8 @@ func _wall_ahead(pest: Dictionary, grid: Grid) -> bool:
 	var size: Vector2 = PROFILES[pest["kind"]]["size"]
 	var feet: Vector2 = pest["position"]
 	var front := feet.x + int(pest["facing"]) * (size.x * 0.5 + 1.0)
-	return grid.is_solid(Grid.cell_at(Vector2(front, feet.y - size.y * 0.5)))
+	var cell := Grid.cell_at(Vector2(front, feet.y - size.y * 0.5))
+	return grid.is_solid(cell) or grid.is_slope(cell)
 
 
 ## Floor under the point `tiles_out` tiles beyond the pest's leading edge.
@@ -398,7 +399,8 @@ func _floor_ahead(pest: Dictionary, grid: Grid, tiles_out: int) -> bool:
 	var size: Vector2 = PROFILES[pest["kind"]]["size"]
 	var feet: Vector2 = pest["position"]
 	var front := feet.x + int(pest["facing"]) * (size.x * 0.5 + 1.0 + tiles_out * Grid.TILE)
-	return grid.tile(Grid.cell_at(Vector2(front, feet.y + 1.0))) != Grid.EMPTY
+	var cell := Grid.cell_at(Vector2(front, feet.y + 1.0))
+	return grid.tile(cell) != Grid.EMPTY and not grid.is_slope(cell)
 
 
 func _landing_within(pest: Dictionary, grid: Grid, tiles: int) -> bool:
@@ -410,7 +412,9 @@ func _landing_within(pest: Dictionary, grid: Grid, tiles: int) -> bool:
 
 static func _ground_below(grid: Grid, point: Vector2) -> float:
 	var column := floori(point.x / Grid.TILE)
-	for row in range(floori(point.y / Grid.TILE) + 1, grid.bottom_row + 1):
-		if grid.tile(Vector2i(column, row)) != Grid.EMPTY:
-			return row * Grid.TILE
+	var first := floori(point.y / Grid.TILE) + int(grid.slope_count == 0)
+	for row in range(first, grid.bottom_row + 1):
+		var surface := grid.surface_y(Vector2i(column, row), point.x)
+		if is_finite(surface) and surface >= point.y - 0.001:
+			return surface
 	return INF

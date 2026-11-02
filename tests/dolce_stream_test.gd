@@ -32,6 +32,8 @@ func _run() -> void:
 	_test_biome_schedule()
 	_test_gate_events()
 	_test_live_window()
+	_test_hills()
+	_test_live_window(true)
 	_test_seed_range()
 	_finish()
 
@@ -189,13 +191,13 @@ func _test_gate_events() -> void:
 		"A Market start is 2200 m from the front door.")
 
 
-func _test_live_window() -> void:
-	var stream := LevelStream.new(7)
+func _test_live_window(hills := false) -> void:
+	var stream := LevelStream.new(7, 0, {}, hills)
 	var state := stream.start()
 	_expect(state.position == ChunkLibrary.start_position(), "A run starts at the start position.")
 	_expect(stream.next_column * Grid.TILE >= state.position.x + LevelStream.AHEAD_TILES * Grid.TILE,
 		"Three screens of course are laid before she takes a step.")
-	var reference := LevelStream.new(7)
+	var reference := LevelStream.new(7, 0, {}, hills)
 	reference.start()
 	var x := state.position.x
 	var changed := 0
@@ -223,6 +225,40 @@ func _test_live_window() -> void:
 	_expect(same, "Freeing what is behind never changes what is ahead.")
 	_expect(stream.placed.size() >= 1 and int(stream.placed[0]["column"]) <= cutoff + 48,
 		"The window keeps the chunk under the camera.")
+	var slopes := stream.grid.cells().filter(func(cell: Vector2i) -> bool:
+		return stream.grid.is_slope(cell)).size()
+	_expect(stream.grid.slope_count == slopes, "The live ramp count matches the retained tiles.")
+
+
+func _test_hills() -> void:
+	for seed_value in [0, 42, 2024]:
+		var ids := LevelStream.sequence(seed_value, ChunkLibrary.CYCLE_METRES, 0, true)
+		_expect(ids == LevelStream.sequence(seed_value, ChunkLibrary.CYCLE_METRES, 0, true)
+			and ids != LevelStream.sequence(seed_value, ChunkLibrary.CYCLE_METRES),
+			"Hills is deterministic but separate from ordinary/Daily courses.")
+		var rows := LevelStream.strip(seed_value, ChunkLibrary.CYCLE_METRES, 0, true)
+		for problem in ChunkLibrary.route_problems(rows, "Hills seed %d" % seed_value):
+			_failures.append(problem)
+		var text := "".join(rows)
+		_expect(text.contains("/") and text.contains("\\"), "A Hills cycle has real up/down ramps.")
+		var since_breather := 0
+		var column := 0
+		var previous := ""
+		for id in ids:
+			var chunk := ChunkLibrary.chunk_named(id)
+			_expect(not chunk.is_empty(), "A streamed Hills chunk can be found by id.")
+			if chunk.is_empty():
+				break
+			since_breather = 0 if chunk.get("breather", false) else since_breather + 1
+			var hardest := 1 + floori(maxf(0, column - ChunkLibrary.START_COLUMN) / LevelStream.RAMP_METRES)
+			_expect(since_breather < LevelStream.BREATHER_EVERY and previous != id
+				and int(chunk["difficulty"]) <= hardest,
+				"Hills retains forced breathers, no repeats and the difficulty ramp.")
+			column += ChunkLibrary.rows_of(chunk)[0].length()
+			previous = id
+		var ordinary := "".join(LevelStream.strip(seed_value, RUN_METRES))
+		_expect(not ordinary.contains("/") and not ordinary.contains("\\"),
+			"Ordinary and Daily streams never receive slope tiles.")
 
 
 func _test_seed_range() -> void:

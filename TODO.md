@@ -16,10 +16,10 @@ good" and approved local finalization. Commits, tags, signing and publication
 are deferred. The detailed manual/device checks below have no supplied test
 matrix; do not treat general owner acceptance as evidence they were performed.
 
-**v2 phase 1 is implemented in source:** Daily UTC (§5.6), with UTC-midnight
-resets, unlimited Backyard attempts and separate daily bests. All 13 game
-and 15 framework suites pass on Godot 4.7.2. V1 binaries remain frozen;
-v2 has not been packaged or owner-accepted.
+**v2 is implemented in source:** Daily UTC (§5.6), Hills (§5.7), human
+hot-seat turns (§5.8), optional Chase (§8) and original music (§9.6).
+All 14 game and 15 framework suites pass on Godot 4.7.2. V1 binaries remain
+frozen; v2 has not been packaged or owner-accepted.
 
 ---
 
@@ -73,6 +73,11 @@ Don't start work that depends on an unanswered one.
       with **unlimited attempts** from the Backyard. Separate daily bests;
       existing assists/achievements stay available; a started run keeps its
       date/seed through midnight.
+- [x] **Remaining v2 scope** (§13.10) — implement all four features.
+      Slopes belong in a separate Hills endless run, preserving ordinary/
+      Daily courses and fixed stage lists. Chase is optional; Side stays
+      default. Human hot seat includes stages: clearing beats failing and
+      fastest clear wins.
 - [x] Fold every answer above into `DESIGN.md` (§1, §3, §4.5, §5.4, §6.3,
       §9.1, §10, §12, §13) so the design and this list agree.
 
@@ -475,10 +480,9 @@ on.
       non-collection presets exclude Dolce; collection still includes it.
 - [x] Host `.gitmodules` and submodule registration use `dolces_adventure`.
 - [ ] Commit game changes, then the host changes and updated gitlink.
-      The owner committed the original v1 game snapshot as `2840893`.
-      New playthrough QA and host release-integration changes remain
-      unstaged/uncommitted; pre-existing staged registration is preserved.
-      Deferred at the owner's request for local release finalization.
+      Game snapshots have been committed by the owner; host/gitlink
+      integration remains owner-managed. Pre-existing staged registration
+      is preserved. No commits or tags are created by this source phase.
 - [x] Root `AGENTS.md`: games table, submodules, options files, test table,
       feature tags, blurb. Update `godot-base/README.md` if it lists games.
 - [x] Write the folder `README.md`: play, controls/assists, host launch,
@@ -544,10 +548,52 @@ on.
 - [ ] Owner playtest/acceptance and a separately versioned v2 release.
       Automated rendered phones are not physical-device measurements.
 
-## Remaining v2 candidates (§12; not in this phase)
+## V2 phase 2 — Music, hot seat, Hills and Chase (§5.7–§5.8, §8, §9.6)
 
-- [ ] Slopes (model + validator).
-- [ ] Hot-seat turns, P1/P2/P3, best distance wins (reuse Cube Trials'
-      hand-off flow).
-- [ ] Chase camera.
-- [ ] A light music bed through `AudioManager`.
+- [x] Original quiet four-bar melody/bass loop through `AudioManager`'s
+      Music bus. Shared Music/Master mute and volume; no stacked players on
+      retries/handoffs, continuous under pause/results, stopped on exit.
+      PCM tests cover deterministic bytes, level and click-free looping.
+- [x] Two/three-human turns through the shared setup/results flow, with
+      independent same-seed bodies, food and pests. Daily captures one date
+      for the whole match. No CPU, simultaneous play or split-screen.
+- [x] Responsive handoff with held-input release gates before Start and
+      again before the next body advances; shared keyboard/pad or assigned pads.
+- [x] Visible-headline ranking: whole metres; clear beats failure, fastest
+      displayed stage tenth wins, failed stages compare metres. Shared ties,
+      no hidden score tie-break. Results/share include every seat.
+- [x] Every turn contributes its own records and achievements; one shared
+      best-score payout and at most one stage-clear bonus after the final turn.
+      Per-turn outfits freeze on completion, including after wardrobe changes.
+- [x] Separate always-open Hills run, records and selector still. Four
+      authored hill profiles per biome retain the normal biome schedule,
+      difficulty ramp, breathers and no-repeat rule. Ordinary/Daily courses
+      and fixed stage lists are unchanged.
+- [x] Solid triangular ramp physics/meshes: two-way continuous walking,
+      diagonal landing, jump-off, high-edge/underside collision and essential
+      read-only rig contact alignment. Ground patrols turn before ramps.
+      The validator adds backing/headroom/endpoint checks without loosening
+      the existing jump margins or changing the measured jump limits.
+- [x] Saved Side/Chase choice in Settings; Side remains default. Chase uses
+      the same physical left bound and immediate reduced-motion framing.
+- [x] Rendered tests in both views: seven window sizes, large-UI airborne
+      poses, Hills, readable Daily dates, full five-tile-pit landing visibility
+      and phone handoffs with 44 px targets. Fresh captures inspected.
+- [x] Real input-only Hills seed 42 run: **2,461 m**, **351 burgers**,
+      **36 stomps**, all five biomes; genuine collision-driven finish.
+      The new hot-seat suite plays three-player Daily across midnight,
+      two-player Hills and tied Stage 1 clears, including retries/settlement.
+- [x] **Test gate:** 14 game + 15 framework suites pass on Godot 4.7.2.
+      The complete scene also passes in a real window with Chase, reproducing
+      Side's full-stage and ordinary/Daily/Hills outcomes. Expected damaged-save
+      diagnostics and the two pre-existing host shutdown warnings remain.
+      New scripts pass formatting; no new lint diagnostics (26 existing
+      diagnostics across the edited scripts are unchanged).
+- [x] Update README, DESIGN and agent guidance; import new Hills art/UIDs.
+      Frozen v1 EXE/PCK/ZIP sizes and SHA-256 hashes are unchanged. No host
+      changes, commits, exports, tags, signing or publication in this phase.
+- [ ] Owner playtest/acceptance of v2, including actual speaker/music mixing
+      and physical-device/controller handoffs. Automated checks do not
+      establish comfort, listening quality or hardware-specific behavior.
+- [ ] Separately versioned v2 package and release QA; never overwrite v1's
+      existing output directory/version.

@@ -18,12 +18,17 @@ const ONE_WAY := 2
 const LUNCHBOX := 3
 ## What a Lunchbox becomes once it has been opened: still solid, now empty.
 const EMPTY_BOX := 4
+## Solid below the diagonal: / rises right, \ falls right.
+const SLOPE_UP := 5
+const SLOPE_DOWN := 6
 const SOLIDS: Array[int] = [SOLID, LUNCHBOX, EMPTY_BOX]
+const SLOPES: Array[int] = [SLOPE_UP, SLOPE_DOWN]
 
 ## The legend characters this grid understands. The full chunk legend, with
 ## pickups and pests, belongs to `chunk_library.gd`; anything else is air here.
-const GLYPHS := {"#": SOLID, "=": ONE_WAY}
+const GLYPHS := {"#": SOLID, "=": ONE_WAY, "/": SLOPE_UP, "\\": SLOPE_DOWN}
 
+var slope_count := 0
 var _tiles: Dictionary[Vector2i, int] = {}
 ## The lowest row that has ever held a tile, so a fall can be detected below
 ## the deepest ground without scanning the grid.
@@ -45,6 +50,8 @@ func paint_rows(rows: Array[String], origin := Vector2i.ZERO) -> void:
 
 
 func set_tile(cell: Vector2i, kind: int) -> void:
+	slope_count -= int(is_slope(cell))
+	slope_count += int(kind in SLOPES)
 	if kind == EMPTY:
 		_tiles.erase(cell)
 		return
@@ -60,11 +67,28 @@ func is_solid(cell: Vector2i) -> bool:
 	return tile(cell) in SOLIDS
 
 
+func is_slope(cell: Vector2i) -> bool:
+	return tile(cell) in SLOPES
+
+
+## The actual top at x, shared by body collision, shadows and terrain drawing.
+func surface_y(cell: Vector2i, x: float) -> float:
+	var kind := tile(cell)
+	if kind == EMPTY:
+		return INF
+	var along := clampf(x - cell.x * TILE, 0.0, TILE)
+	if kind == SLOPE_UP:
+		return (cell.y + 1) * TILE - along
+	if kind == SLOPE_DOWN:
+		return cell.y * TILE + along
+	return cell.y * TILE
+
+
 ## Frees every tile left of `column`, as the stream drops chunks behind the view.
 func clear_before(column: int) -> void:
 	for cell: Vector2i in _tiles.keys():
 		if cell.x < column:
-			_tiles.erase(cell)
+			set_tile(cell, EMPTY)
 
 
 func size() -> int:

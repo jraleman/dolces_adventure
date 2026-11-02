@@ -8,6 +8,9 @@ const Options = preload("res://games/dolces_adventure/dolces_adventure_options.g
 const State = preload("res://games/dolces_adventure/run_state.gd")
 const View = preload("res://games/dolces_adventure/world_view.gd")
 const Controls = preload("res://games/dolces_adventure/run_controls.gd")
+const Grid = preload("res://games/dolces_adventure/tile_grid.gd")
+const Chunks = preload("res://games/dolces_adventure/chunk_library.gd")
+const Art = preload("res://games/dolces_adventure/dolce_art.gd")
 
 const WINDOWS := {
 	"desktop": Vector2i(1280, 720),
@@ -58,6 +61,7 @@ func _run() -> void:
 	_settings.call("set_value", "accessibility/visual_effects", false)
 	_settings.call("set_value", "accessibility/audio_captions", true)
 	_settings.call("set_value", Options.AUTO_RUN_KEY, false)
+	_settings.call("set_value", Options.CAMERA_KEY, Options.CAMERA_SIDE)
 	_settings.call("set_value", Options.TOUCH_HINT_SEEN_KEY, false)
 	get_root().mode = Window.MODE_WINDOWED
 	await _resize(WINDOWS["desktop"])
@@ -124,9 +128,14 @@ func _run() -> void:
 		_expect(_view.get_global_rect().grow(1.0).encloses(body),
 			"Jump and fall stay on screen with large UI (velocity %.0f)." % velocity)
 		_check_layout("large UI airborne %.0f" % velocity)
+	await _check_camera_views()
+	await _check_hills_layouts()
 	await _check_daily_layouts()
+	await _check_daily_layouts(true)
+	await _check_handoff_layouts()
 	_game.queue_free()
 	await process_frame
+	await create_timer(0.1).timeout
 	_restore()
 	if _failures.is_empty():
 		print("Dolce view tests passed (portrait, landscape, tablet, ultrawide and large UI).")
@@ -137,9 +146,11 @@ func _run() -> void:
 		quit(1)
 
 
-func _check_daily_layouts() -> void:
+func _check_daily_layouts(chase := false) -> void:
 	_settings.call("set_value", "ui/scale", 1.0)
 	_settings.call("set_value", "accessibility/reduced_motion", true)
+	_settings.call("set_value", Options.CAMERA_KEY,
+		Options.CAMERA_CHASE if chase else Options.CAMERA_SIDE)
 	get_root().get_node("GameSession").call("set_level", Options.DAILY)
 	_game.call("_start_round")
 	_game.set("_round_active", false)
@@ -160,7 +171,153 @@ func _check_daily_layouts() -> void:
 			"%s: the full daily date fits its HUD label without clipping." % title)
 		_expect(label.get_theme_font_size("font_size") * View.physical_scale(_game) >= 13.5,
 			"%s: the daily date retains at least 14 physical pixels of readable text." % title)
-		_capture("Daily UTC " + title)
+		_capture("Daily UTC " + ("Chase " if chase else "Side ") + title)
+
+
+func _check_camera_views() -> void:
+	_settings.call("set_value", "ui/scale", 1.0)
+	_settings.call("set_value", "accessibility/reduced_motion", true)
+	get_root().get_node("GameSession").call("set_level", Options.START_BACKYARD)
+	_game.call("_start_round")
+	_game.set("_round_active", false)
+	_state = _game.get("_state") as State
+	for title: String in WINDOWS:
+		await _resize(WINDOWS[title])
+		_controls.visible = title != "desktop" and title != "ultrawide"
+		await _settle()
+		var before := _state.position
+		var elapsed := _state.elapsed
+		var left := _view.left_edge()
+		var side := _view.world_camera.position
+		_settings.call("set_value", Options.CAMERA_KEY, Options.CAMERA_CHASE)
+		await _settle()
+		_expect(_view.chase_camera and _view.world_camera.position.x < side.x - 1.0,
+			"Chase %s: the actual camera changes to an angled forward view." % title)
+		_expect(_state.position == before and _state.elapsed == elapsed
+			and is_equal_approx(_view.left_edge(), left),
+			"Chase %s: switching views cannot alter the body, clock or physical left bound." % title)
+		_check_layout("Chase " + title)
+		await _check_rendered_dolce("Chase " + title)
+		_capture("Chase " + title)
+		_settings.call("set_value", Options.CAMERA_KEY, Options.CAMERA_SIDE)
+		_expect(_state.position == before and is_equal_approx(_view.left_edge(), left),
+			"Side %s: switching back cannot shove Dolce or scroll the model bound." % title)
+	_settings.call("set_value", Options.CAMERA_KEY, Options.CAMERA_CHASE)
+	_settings.call("set_value", "accessibility/reduced_motion", false)
+	_settings.call("set_value", "ui/scale", 1.4)
+	await _resize(WINDOWS["small landscape phone"])
+	_controls.show()
+	for velocity: float in [-600.0, 600.0]:
+		_state.position.y = 20.0
+		_state.velocity.y = velocity
+		_state.grounded = false
+		_view.present(0.0)
+		await _settle()
+		_check_layout("Chase large UI airborne %.0f" % velocity)
+	_settings.call("set_value", "ui/scale", 1.0)
+	_settings.call("set_value", "accessibility/reduced_motion", true)
+	await _check_pit_landing()
+
+
+## Render the actual widest authored pit at take-off. A projected point alone
+## is insufficient: hiding the terrain must change the landing's visible pixels.
+func _check_pit_landing() -> void:
+	var chunk := Chunks.chunk_named("wide_leap")
+	var rows := Chunks.rows_of(chunk)
+	var lip := rows[Chunks.SEAM_ROW].find(".")
+	var bank := rows[Chunks.SEAM_ROW].find("#", lip)
+	var grid := Grid.new()
+	var course := Chunks.build(rows, grid)
+	_state = State.new(grid, Vector2(lip * Grid.TILE - State.BODY_SIZE.x * 0.5,
+		Chunks.SEAM_ROW * Grid.TILE))
+	_state.add_course(course)
+	_view.configure(_state, [{
+		"column": 0, "width": rows[0].length(), "biome": 0, "gate": false, "goal": false,
+	}])
+	for title: String in ["small portrait phone", "small landscape phone"]:
+		await _resize(WINDOWS[title])
+		_controls.show()
+		for mode: int in [Options.CAMERA_SIDE, Options.CAMERA_CHASE]:
+			_settings.call("set_value", Options.CAMERA_KEY, mode)
+			await _settle()
+			_view.present(0.0)
+			await _settle()
+			var tag := "%s %s five-tile pit" % ["Side" if mode == Options.CAMERA_SIDE else "Chase", title]
+			_check_layout(tag)
+			var landing := Vector2((bank + 0.15) * Grid.TILE, Chunks.SEAM_ROW * Grid.TILE)
+			_expect(Rect2(Vector2.ZERO, _view.size).has_point(_view.project_point(landing)),
+				tag + ": the far landing is in frame before take-off.")
+			await RenderingServer.frame_post_draw
+			var visible_image := _view.world_viewport.get_texture().get_image()
+			for node: Node3D in _view.get("_chunk_meshes").values():
+				node.hide()
+			await RenderingServer.frame_post_draw
+			var hidden_image := _view.world_viewport.get_texture().get_image()
+			for node: Node3D in _view.get("_chunk_meshes").values():
+				node.show()
+			await RenderingServer.frame_post_draw
+			var pixel := Vector2i(_view.world_camera.unproject_position(
+				Art.world_point(landing) + Vector3(0, 0.08, 0)))
+			_expect(_changed_pixels(visible_image, hidden_image,
+				Rect2i(pixel - Vector2i(5, 5), Vector2i(11, 11))) >= 4,
+				tag + ": the landing draws visible terrain, not just an on-screen coordinate.")
+			_capture(tag)
+	_state = _game.get("_state") as State
+	_view.configure(_state, _game.call("_live_chunks"))
+
+
+func _check_hills_layouts() -> void:
+	get_root().get_node("GameSession").call("set_level", Options.HILLS)
+	_game.call("_start_round")
+	_game.set("_round_active", false)
+	_state = _game.get("_state") as State
+	var ramps := _state.grid.cells().filter(func(cell: Vector2i) -> bool:
+		return _state.grid.tile(cell) == Grid.SLOPE_UP)
+	_expect(not ramps.is_empty(), "The Hills layout samples actual slope geometry.")
+	if ramps.is_empty():
+		return
+	var ramp: Vector2i = ramps[0]
+	var x := (ramp.x + 0.5) * Grid.TILE
+	_state.place(Vector2(x, _state.grid.surface_y(ramp, x + State.BODY_SIZE.x * 0.5)))
+	_view.configure(_state, _game.call("_live_chunks"))
+	for title: String in ["desktop", "small portrait phone", "small landscape phone"]:
+		await _resize(WINDOWS[title])
+		_controls.visible = title != "desktop"
+		for mode: int in [Options.CAMERA_SIDE, Options.CAMERA_CHASE]:
+			_settings.call("set_value", Options.CAMERA_KEY, mode)
+			await _settle()
+			_view.present(0.0)
+			await _settle()
+			var tag := "Hills %s %s" % ["Side" if mode == Options.CAMERA_SIDE else "Chase", title]
+			_check_layout(tag)
+			await _check_rendered_dolce(tag)
+			_capture(tag)
+
+
+func _check_handoff_layouts() -> void:
+	var session := get_root().get_node("GameSession")
+	session.call("configure_multiplayer", 0, 1, 3)
+	session.call("set_level", Options.STAGE_BACKYARD)
+	_game.call("_start_round")
+	_game.set("_round_active", false)
+	var handoff: Control = _game.get("_handoff")
+	_game.call("_finish_round")
+	handoff.call("show_turn", "Player 3", "Player 2: Clear / 1:04.3", session.call("player_color", 2))
+	for title: String in ["desktop", "small portrait phone", "small landscape phone"]:
+		await _resize(WINDOWS[title])
+		await _settle()
+		var screen := Rect2(Vector2.ZERO, get_root().get_visible_rect().size).grow(1)
+		var panel: Control = handoff.get("panel")
+		var button: Button = handoff.get("button")
+		_expect(screen.encloses(panel.get_global_rect()),
+			"Hot seat %s: the full handoff panel fits." % title)
+		_expect(button.size.y * View.physical_scale(_game) >= MIN_TOUCH_TARGET,
+			"Hot seat %s: Start retains a usable physical target." % title)
+		for label: Label in [handoff.get("title"), handoff.get("copy")]:
+			_expect(label.get_theme_font_size("font_size") * View.physical_scale(_game) >= 14.0,
+				"Hot seat %s: handoff text remains readable." % title)
+		_capture("Hot seat " + title)
+	session.call("configure_single_player")
 
 
 func _check_layout(title: String) -> void:
@@ -249,19 +406,25 @@ func _check_rendered_dolce(title: String) -> void:
 	var hidden_image := _view.world_viewport.get_texture().get_image()
 	_view.dolce.show()
 	await RenderingServer.frame_post_draw
-	var changed := 0
 	var factor := Vector2(visible_image.get_size()) / _view.size
 	var rect := _body_rect()
 	var first := Vector2i((rect.position - _view.global_position) * factor)
 	var last := Vector2i((rect.end - _view.global_position) * factor)
-	for y in range(maxi(first.y, 0), mini(last.y + 1, visible_image.get_height())):
-		for x in range(maxi(first.x, 0), mini(last.x + 1, visible_image.get_width())):
-			var before := visible_image.get_pixel(x, y)
-			var after := hidden_image.get_pixel(x, y)
-			if Vector3(before.r, before.g, before.b).distance_to(
-				Vector3(after.r, after.g, after.b)) > 0.06:
-				changed += 1
+	var changed := _changed_pixels(visible_image, hidden_image,
+		Rect2i(first, last - first + Vector2i.ONE))
 	_expect(changed >= 20, "%s: Dolce must draw visible pixels (%d)." % [title, changed])
+
+
+static func _changed_pixels(before: Image, after: Image, area: Rect2i) -> int:
+	var bounds := area.intersection(Rect2i(Vector2i.ZERO, before.get_size()))
+	var changed := 0
+	for y in range(bounds.position.y, bounds.end.y):
+		for x in range(bounds.position.x, bounds.end.x):
+			var a := before.get_pixel(x, y)
+			var b := after.get_pixel(x, y)
+			if Vector3(a.r, a.g, a.b).distance_to(Vector3(b.r, b.g, b.b)) > 0.06:
+				changed += 1
+	return changed
 
 
 func _body_rect() -> Rect2:

@@ -31,7 +31,8 @@ It is a side-scrolling platformer in the spirit of *Super Mario Bros.* — run,
 variable-height jump, stomp from above, a power-up that buys you one extra
 hit — with both endless seeded runs and five fixed, finishable stages, one per
 biome (§5.5). Endless distance and stage clear time are separate headlines.
-v1 is solo; hot-seat turns are a v2 candidate.
+The frozen v1 release is solo. V2 source also supports human hot-seat turns,
+Daily UTC and a separate Hills run.
 
 ### Locked pillars
 
@@ -75,7 +76,7 @@ into this folder).
 | --- | --- |
 | `trial_state.gd` — node-free 120 Hz chassis model | `run_state.gd` — node-free 120 Hz platformer body and run rules |
 | `course.gd` — handcrafted routes, pickups, checkpoints | `chunk_library.gd` + `level_stream.gd` — authored chunks, seeded assembly, safe-ground points |
-| `course_view.gd` — isolated `SubViewport`, orthographic Side camera | `world_view.gd` — same isolated `SubViewport`, orthographic side camera, optional "Chase" later |
+| `course_view.gd` — isolated `SubViewport`, orthographic Side camera | `world_view.gd` — same isolated `SubViewport`, Side by default or optional angled Chase |
 | `world/cube_model.gd` — imported GLB car, damage stages, decorative poses | `world/dolce_model.gd` — procedural rig of rigid parts (like Chicken Pit's `chicken_rig.gd`), run/jump/land/eat poses, decorative ear and tail motion |
 | `world/mesh_builder.gd` — vertex-colour batching | Same idea, copied into `world/mesh_builder.gd` |
 | `world/daylight.gd` — sun/sky rig, optional day/night | Same rig; biome palettes; optional day/night toggle |
@@ -137,9 +138,9 @@ live at the top of the file so tests and the tuning tunables can quote them.
 | `INVULNERABLE_SECONDS` | 1.5 | After any hit; Dolce blinks via opacity, not flashing colour |
 
 The body is an axis-aligned box (hit box slightly smaller than the visual)
-colliding against a tile grid plus one-way platforms. No slopes in v1 —
-slopes are a v2 item once the core feels right (they complicate the model and
-the chunk validator).
+colliding against a tile grid plus one-way platforms. The frozen v1 release
+has no slopes. V2 adds solid diagonal tiles only to the separate Hills run
+(§5.7); ordinary Endless, Daily UTC and fixed stages retain their flat courses.
 
 **No double jump.** One jump per ground contact, exactly as Cube Trials
 refuses double jumps.
@@ -424,6 +425,50 @@ Owner-approved scope: **UTC midnight and unlimited attempts**.
 - The accepted **v1.0.0 ZIP/EXE/PCK are frozen**. Do not re-export v2 source
   into that v1 package or regenerate unchanged v1 stills/tutorial media.
 
+### 5.7 Hills (v2)
+
+The always-open **Endless - Hills** entry has its own `hills` records and
+seeded chunk pool. It starts in the Backyard and follows the usual biome
+schedule, difficulty ramp and breathers. Only this pool adds authored 45-degree
+up/down ramps. Ordinary endless, Daily UTC and the five fixed stage lists
+keep their existing chunks, seeds and records.
+
+Ramps are solid triangular tiles, not stairs or one-way platforms. The body
+walks continuously up/down in either direction, jumps off normally, lands
+on the diagonal, and collides with their solid underside/high edge. There is
+no downhill speed bonus or new jump tuning. Safe respawns and ground patrols stay on
+flat ground. The validator retains its jump margins and additionally checks
+continuous ramp endpoints, solid backing and headroom; malformed ramps cannot
+enter the stream. The view renders the same diagonal used by collision.
+
+### 5.8 Human hot-seat turns (v2)
+
+Use the framework's existing two/three-player setup, player colours, controller
+assignments and results cards. Each player takes one complete turn with fresh
+hearts, food and pests on the **same seed/course**, including Hills. Daily UTC
+captures its identity once for the whole match, so midnight between turns
+cannot change a player's course. Kind pits and Game speed are captured for
+the match; live Auto-run changes apply to all seats. Existing live
+accessibility controls remain available.
+
+Between turns, show a captioned **Pass the controls / Start Player N** overlay.
+Clear touch actions and require held gameplay inputs to be released before
+enabling Start and again before advancing the next body. A single keyboard,
+shared pad or each seat's assigned pad may be passed around. No split-screen
+or CPU opponent is introduced.
+
+Endless/Daily/Hills compare displayed whole metres. On stages, a clear beats
+any failure, fastest displayed tenth-second clear wins, and failed attempts
+compare metres. Exact headline ties share a place; score never breaks them.
+Final results and share data list every seat's real run, not the last body's
+stats. Each turn keeps its own outfit snapshot; changing the wardrobe later
+cannot rewrite a completed turn's share data. Achievements and best-record
+merges consider each completed turn.
+Only the final turn settles the match: one shared wallet payout, using the
+framework's best-score rule plus three Treats, with one twenty-Treat clear
+bonus if anyone cleared. Solo payouts remain unchanged. Play Again starts
+every seat afresh (and captures the new UTC date for a daily rematch).
+
 ---
 
 ## 6. Architecture
@@ -441,10 +486,12 @@ chunk_library.gd            # authored chunk grids, legend, validator
 level_stream.gd             # seeded assembly, ramp, safe-ground, live tile window; stage mode
 stages.gd                   # the five fixed stages: chunk lists, lengths, time format
 daily_run.gd                # node-free UTC date, deterministic seed and daily record key
-world_view.gd               # isolated SubViewport, orthographic camera, one baked mesh per chunk
+run_standings.gd            # node-free headline ranking and shared places
+hotseat_handoff.gd          # responsive pass-the-controls overlay; gameplay gates release
+world_view.gd               # isolated SubViewport, Side/Chase camera, one baked mesh per chunk
 run_controls.gd             # keyboard, gamepad, multitouch
-run_hud.gd                  # hearts, distance, burgers, score, pause
-dolce_audio.gd              # synthesized cues
+run_hud.gd                  # hearts, burgers and Full; shell owns headlines and Pause
+dolce_audio.gd              # synthesized cues/captions and original PCM music loop
 dolce_art.gd                # palette, WORLD_SCALE, world_point(), materials
 share_art.gd / .tscn        # Dolce's victory sit beside a Big Burger for the share card
 store_preview.gd / .tscn    # Dolce wearing one item, drawn once
@@ -488,8 +535,9 @@ the model — the Cube Trials rule.
 Copy the signatures exactly from `AGENTS.md`.
 
 Because the game owns its rules (`uses_shell_round_rules = false`), the shell's
-countdown/lives pool is not used; the run ends when `run_state.hearts == 0`
-and gameplay calls the shell's normal end-of-round path, as Cube Trials does.
+countdown/lives pool is not used. Each body ends on its last heart or a stage
+clear; only the final hot-seat turn calls the shell's normal end-of-round
+path. Solo still settles immediately.
 
 ### 6.3 Manifest sketch
 
@@ -502,9 +550,11 @@ game.gameplay_scene_path = "res://games/dolces_adventure/gameplay.tscn"
 game.intro_scene_path = "res://games/dolces_adventure/intro.tscn"
 game.control_style = GameManifest.CONTROL_STYLE_CUSTOM_KEYS
 game.uses_shell_round_rules = false
-game.supports_multiplayer = false               # v1; see §11
+game.supports_multiplayer = true
+game.max_local_players = 3
+game.local_multiplayer_turns = true
 game.supports_cpu_opponent = false
-game.levels = Options.LEVELS                    # start biomes, achievement-gated
+game.levels = Options.LEVELS                    # starts, stages, Daily UTC and Hills
 game.save_files = [{"path": "user://dolces_adventure.cfg", "title": "Best runs",
 		"description": "Best distance, score and burgers from each start point, and stage times."}]
 game.characters = Options.CHARACTERS            # Dolce alone, so the plinth shows her
@@ -523,7 +573,8 @@ game.theme = theme                              # §7.3
 ### 7.1 Same pipeline as Cube Trials
 
 - Real 3D in an isolated `SubViewport` (Compatibility renderer), orthographic
-  side camera with a slight downward tilt so ground tops read.
+  Side camera with a slight downward tilt so ground tops read; optional
+  angled Chase in v2, with no change to the movement plane.
 - **Original** low-poly models, vertex-coloured, built from rounded
   primitives in GDScript through `mesh_builder.gd` (owner decision: no
   Blender on the build machine, and procedural parts keep poses testable
@@ -609,6 +660,13 @@ permits.
 | `game/dolces_adventure_kind_pits` | toggle | false |
 | `game/dolces_adventure_game_speed` | slider 70–100% | 100% |
 | `game/dolces_adventure_day_night` | toggle | true |
+| `game/dolces_adventure_camera` | choice: Side / Chase | Side |
+
+The optional Chase view is an angled, forward-looking orthographic follow
+camera, not a change to the 2D movement plane. It keeps Dolce, the next pit
+and its landing visible on phones as well as desktops. Side remains default.
+Switching camera cannot push the physical left bound ahead of Dolce or alter
+model inputs; reduced motion uses immediate framing, never orbit/bob/easing.
 
 Assists never block achievements (Cube Trials' rule).
 
@@ -637,10 +695,11 @@ The first four also gate the start-biome levels (§5.4).
 
 ### 9.2 Store — currency "Treats"
 
-A run pays `score / 100` Treats (`points_per_score = 0.01`) plus 3 for
+A run pays `score / 100` Treats, rounded (`points_per_score = 0.01`), plus 3 for
 playing (`round_bonus`). There is no CPU to beat, so `win_bonus` is 0. Clearing
 a stage pays `TREATS_PER_CLEAR` (20) on top, through gameplay's
-`_round_points_earned` override. Slots: **collar**, **hat**, **bandana**; the
+`_round_points_earned` override. A hot-seat match pays once using the best
+score and at most one clear bonus (§5.8). Slots: **collar**, **hat**, **bandana**; the
 hat and bandana slots can be empty. Items are purely cosmetic and visible in
 the run, the setup plinth, the share card and the gallery; a colour comes from
 the item's own entry, so the store's swatch and the worn mesh always agree.
@@ -679,6 +738,9 @@ Stage 1. `gallery_stage.tscn` implements `configure`, `set_view` and
 in the victory sit on a little lawn beside a Big Burger, under the Backyard
 sky. The shell's card around it carries the headline: distance on an endless
 run, clear time on a stage, with burgers, score and the QR to `stats_url`.
+In hot seat, the stable first-ranked turn supplies the portrait/headline;
+the payload lists every seat's real run and captured outfit, not whichever
+wardrobe was equipped last.
 
 ### 9.5 Accessibility (non-negotiable)
 
@@ -700,7 +762,12 @@ run, clear time on a stage, with burgers, score and the QR to `stats_url`.
 Synthesized like `cube_audio.gd`: jump yip (pitch rises with jump strength),
 land pat, stomp boing (pitch climbs with the chain), munch, Full "gulp",
 hit whine, heart chime, biome fanfare, run-over tumble. No continuous loop
-required in v1; an optional light music bed later goes through `AudioManager`.
+required in v1. V2 adds an original, quiet plucked melody and bass loop,
+synthesized as mono PCM by the same module. It goes through `AudioManager`'s
+Music bus, so the existing Music/Master volume and mute controls apply.
+It carries no gameplay information, needs no repeating caption and never
+replaces SFX. It continues under pause/results and stops when gameplay leaves;
+retries/turn handoffs do not stack players or restart the loop.
 
 ---
 
@@ -711,29 +778,33 @@ Headless unless noted; each a standalone `SceneTree` script that exits 0.
 | Suite | Covers |
 | --- | --- |
 | `dolces_adventure_manifest_test.gd` | Manifest, prefixed keys, shell rules, declared assets and content |
-| `dolce_physics_test.gd` | Accel/decel, max speeds, jump apex for tap vs hold, coyote, buffer, no double jump, fall cap, game-speed scaling |
+| `dolce_physics_test.gd` | Accel/decel, max speeds, jump apex, coyote, buffer, no double jump, fall cap, game speed; two-way slopes, diagonal landings and solid ramp collisions |
 | `dolce_rules_test.gd` | Stomp vs side hit, Full ↔ Normal, hearts, i-frames, pit respawn at last `S`, 100-burger heart, stomp chain points, run end |
-| `dolce_chunks_test.gd` | `validate()` on **every** chunk: seams, max gap/height vs `run_state` constants, spawns, safe ground |
-| `dolce_stream_test.gd` | Same seed ⇒ same world; difficulty ramp; breather spacing; no immediate repeats; window frees old chunks |
-| `dolce_pests_test.gd` | Each enemy's behaviour, robo-vac kick chain, seagull swoop bounds |
+| `dolce_chunks_test.gd` | Every ordinary/Hills chunk: seams, jump margins, spawns, safe ground; ramp backing, headroom and continuous endpoints |
+| `dolce_stream_test.gd` | Seeded ordinary/Daily/Hills courses, difficulty ramp, breathers, no repeats, bounded window and exact slope counts |
+| `dolce_pests_test.gd` | Every pest, robo-vac kick chain, seagull swoops and ground patrols turning before ramps |
 | `dolce_records_test.gd` | Merged records, monotonic bests, damaged files left untouched |
 | `dolce_stages_test.gd` | Fixed courses, fair seams, goals, seed independence, clocks and clear records |
-| `dolce_model_test.gd` | Procedural rig, poses, reactions, Full and reduced motion |
-| `dolce_audio_test.gd` | Synthesized cues and captions for meaningful events |
+| `dolce_model_test.gd` | Procedural rig, poses, reactions, Full, reduced motion and read-only slope contact alignment |
+| `dolce_audio_test.gd` | Cues/captions plus original music PCM, deterministic bytes, level and click-free loop seam |
 | `dolce_controls_test.gd` | Routed touch events, genuine sprint taps, handoffs, cancellation, dragging, pause and emulated mouse twins |
-| `dolce_scene_test.gd` | Full input-only stages and Backyard-to-Market run; fresh unlocks, saved results/payouts, HUD/outfit, pause, Auto-run tip and lookahead isolation |
-| `dolce_view_test.gd` *(window)* | Rendered pixels and whole-body bounds; portrait/landscape phones, tablet, ultrawide, long scores, large UI, Full, captions, tip docking and airborne poses |
+| `dolce_scene_test.gd` | Full input-only stages and ordinary/Daily/Hills runs, fresh unlocks, saved results/payouts, HUD/outfit, pause, Auto-run tip and lookahead isolation |
+| `dolce_hotseat_test.gd` | Headline ties/ranking; real three-player Daily across midnight, two-player Hills and tied stage clears; release gates, retries, records, outfits, payout and music lifecycle |
+| `dolce_view_test.gd` *(window)* | Pixels/body bounds in both cameras across phones, tablet and ultrawide; large UI, Full, captions, airborne/Hills poses, five-tile-pit landing visibility and handoffs |
 
 The framework suites (`game_shell_test`, `game_options_test`,
 `accessibility_test`, `visual_effects_test`, `single_game_test`,
 `store_test`, `gallery_test`, `saves_test`, …) pick the game up automatically
 — run them all with `--game=all` before calling a milestone done.
 
+There are fourteen game suites, thirteen headless and one rendered.
 Run suites serially. Isolate `user://` with a scratch `APPDATA` on Windows or
-`XDG_DATA_HOME` on Linux. The scene and view suites also snapshot disk saves
+`XDG_DATA_HOME` on Linux. The scene, hot-seat and view suites also snapshot disk saves
 and Settings' cache, stopping its pending save timer before restoring.
 Load shell gameplay scenes at runtime after autoloads exist, not by directly
 preloading `gameplay.gd` in a `SceneTree` test.
+After freeing gameplay, allow the audio thread to drain before quitting;
+the scene/hot-seat suites wait 0.1 real seconds.
 
 The scene suite's test-only player searches collision trajectories on deep
 copies of the live `run_state`, grid and pests, then presses normal actions.
@@ -745,6 +816,9 @@ constructor's seed. No run is positioned near a goal, no enemies are removed
 and no hearts are injected. Both helpers stay under the excluded `tests/`
 folder; they are not a shipped assist. Predictions must leave live food,
 Lunchboxes, pests, body state and events untouched.
+The same driver also reaches 2,257 m in Daily UTC and 2,461 m in Hills.
+Rerun the complete-scene suite with `--dolce-test-chase` in a real window
+to verify identical course outcomes under the optional camera.
 
 ---
 
@@ -826,8 +900,12 @@ physical-device or speaker test matrix; do not mark those tests as performed.
 resets. This is source development, not a replacement for the frozen v1
 release package.
 
-**Remaining v2 candidates:** slopes, hot-seat turns (P1/P2/P3, best distance
-wins — reuse Cube Trials' hand-off flow), chase camera, music bed.
+**v2 phase 2 is implemented:** Hills slopes (§5.7), human hot-seat turns
+(§5.8), optional Chase camera (§8) and a light music bed (§9.6). All fourteen
+game and fifteen framework suites pass on Godot 4.7.2, including rendered
+phone layouts and complete courses under Chase. No v1 export was rebuilt
+or overwritten. Owner playtesting/listening and a separately versioned v2
+release remain open.
 
 ---
 
@@ -854,6 +932,10 @@ wins — reuse Cube Trials' hand-off flow), chase camera, music bed.
    **UTC midnight** with **unlimited attempts** from the Backyard and
    separate daily bests. Existing assists/achievements remain available;
    each round keeps its captured date/seed through midnight.
+10. **Remaining v2 scope** — answered: implement all four remaining
+    candidates. Slopes belong in a new Hills run, preserving existing
+    stages/daily courses. Chase is optional, Side is default. Hot-seat includes
+    fixed stages: clearing beats failing and fastest clear wins.
 
 Other locked answers, also tracked in `TODO.md`: the heroine is Dolce, with
 new source/save names only and no legacy aliases; her rig uses procedural
